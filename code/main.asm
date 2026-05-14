@@ -43,6 +43,8 @@ extrn glShaderSource
 extrn glCompileShader
 extrn glGetShaderiv
 extrn glGetShaderInfoLog
+extrn glUseProgram
+extrn glDrawArrays
 ; gl3w
 extrn gl3wInit
 extrn gl3wIsSupported
@@ -51,24 +53,24 @@ public _start
 _start:
 	; Initialize glfw
 	call    glfwInit
-	cmp     rax, 1
+	cmp     eax, 1
 	jne     error
 
-	mov     rsi, 3
-	mov     rdi, 0x00022002 ; GLFW_CONTEXT_VERSION_MAJOR
+	mov     esi, 4
+	mov     edi, 0x00022002 ; GLFW_CONTEXT_VERSION_MAJOR
 	call    glfwWindowHint
-	mov     rsi, 3
-	mov     rdi, 0x00022003 ; GLFW_CONTEXT_VERSION_MINOR
+	mov     esi, 6
+	mov     edi, 0x00022003 ; GLFW_CONTEXT_VERSION_MINOR
 	call    glfwWindowHint
-	mov     rsi, 0x00022008 ; GLFW_OPENGL_CORE_PROFILE
-	mov     rdi, 0x00032001 ; GLFW_OPENGL_PROFILE
+	mov     esi, 0x00022008 ; GLFW_OPENGL_CORE_PROFILE
+	mov     edi, 0x00032001 ; GLFW_OPENGL_PROFILE
 	call    glfwWindowHint
 
-	mov     r8, 0
-	mov     rcx, 0
+	mov     r8d, 0
+	mov     ecx, 0
 	mov     rdx, window_name
-	mov     rsi, 480
-	mov     rdi, 640
+	mov     esi, 480
+	mov     edi, 640
 	call    glfwCreateWindow
 
 	mov     [glfw_window], rax
@@ -79,13 +81,13 @@ _start:
 
 	; Initialize gl3w
 	call    gl3wInit
-	cmp     rax, 0
+	cmp     eax, 0
 	jne     error
 
-	mov     rsi, 3
-	mov     rdi, 3
+	mov     esi, 3
+	mov     edi, 3
 	call    gl3wIsSupported
-	cmp     rax, 1
+	cmp     eax, 1
 	jne     error
 
 	; Initialize OpenGL. We will need a texture and a quad to
@@ -97,109 +99,110 @@ _start:
 	call    glGenTextures
 
 	mov     esi, [gl_texture]
-	mov     rdi, 0x0DE1 ; GL_TEXTURE_2D
+	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
 	call    glBindTexture
 
-	mov     rdx, 0x812F ; GL_CLAMP_TO_EDGE
-	mov     rsi, 0x2802 ; GL_TEXTURE_WRAP_S
-	mov     rdi, 0x0DE1 ; 0x0DE1 ; GL_TEXTURE_2D
+	mov     edx, 0x812F ; GL_CLAMP_TO_EDGE
+	mov     esi, 0x2802 ; GL_TEXTURE_WRAP_S
+	mov     edi, 0x0DE1 ; 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexParameteri
-	mov     rdx, 0x812F ; GL_CLAMP_TO_EDGE
-	mov     rsi, 0x2803 ; GL_TEXTURE_WRAP_T
-	mov     rdi, 0x0DE1 ; 0x0DE1 ; GL_TEXTURE_2D
+	mov     edx, 0x812F ; GL_CLAMP_TO_EDGE
+	mov     esi, 0x2803 ; GL_TEXTURE_WRAP_T
+	mov     edi, 0x0DE1 ; 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexParameteri
-	mov     rdx, 0x2600 ; GL_NEAREST
-	mov     rsi, 0x2801 ; GL_TEXTURE_MIN_FILTER
-	mov     rdi, 0x0DE1 ; GL_TEXTURE_2D
+	mov     edx, 0x2600 ; GL_NEAREST
+	mov     esi, 0x2801 ; GL_TEXTURE_MIN_FILTER
+	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexParameteri
-	mov     rdx, 0x2600 ; GL_NEAREST
-	mov     rsi, 0x2800 ; GL_TEXTURE_MAG_FILTER
-	mov     rdi, 0x0DE1 ; GL_TEXTURE_2D
+	mov     edx, 0x2600 ; GL_NEAREST
+	mov     esi, 0x2800 ; GL_TEXTURE_MAG_FILTER
+	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexParameteri
 
-	;sub     rsp, 32
-	;mov     qword [rsp + 0x20], screen
-	;mov     [rsp + 0x18], dword 0x1401 ; GL_UNSIGNED_BYTE
-	;mov     [rsp + 0x10], dword 0x1908 ; GL_RGBA
 	push    0
 	push    screen
 	push    0x1401
 	push    0x1908
-	mov     r9, 0
+	mov     r9d, 0
 	mov     r8d, [logical_h]
 	mov     ecx, [logical_w]
-	mov     rdx, 0x1908 ; GL_RGBA
-	mov     rsi, 0
-	mov     rdi, 0x0DE1 ; GL_TEXTURE_2D
+	mov     edx, 0x1908 ; GL_RGBA
+	mov     esi, 0
+	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexImage2D
 	add     rsp, 32
 
+
 	; Quad mesh
-	mov     rsi, gl_vbo
-	mov     rdi, 1
+	mov     rsi, gl_vao
+	mov     edi, 1
 	call    glGenVertexArrays
 
-	mov     edi, [gl_vbo]
+	mov     edi, [gl_vao]
 	call    glBindVertexArray
 
-	mov     rsi, gl_vbo
-	mov     rdi, 1
+	sub     rsp, 16 ; make space for vbo pointer
+	lea     rsi, [rsp] ; [rsp] = vbo
+	mov     edi, 1
 	call    glGenBuffers
-	mov     r12, rax
 
-	mov     rsi, 0x8892 ; GL_ARRAY_BUFFER
-	mov     rdi, r12
+	mov     esi, [rsp]
+	mov     edi, 0x8892 ; GL_ARRAY_BUFFER
 	call    glBindBuffer
+	add     rsp, 16 ; don't need vbo anymore
 
-	mov     rcx, 0x88E4 ; GL_STATIC_DRAW
+	mov     ebx, [verts_len]
+	mov     ebp, 4
+	; TODO: learn about mul and imul. something something lower bits
+	imul    ebp, ebx
+	mov     ecx, 0x88E4 ; GL_STATIC_DRAW
 	mov     rdx, verts
-	mov     esi, [verts_len]
-	mov     rdi, 0x8892 ; GL_ARRAY_BUFFER
+	mov     esi, ebp
+	mov     edi, 0x8892 ; GL_ARRAY_BUFFER
 	call    glBufferData
 
-	mov     rdi, 0
+
+	mov     edi, 0
 	call    glEnableVertexAttribArray
 
-	mov     r9, 0
-	mov     r8, 8
-	mov     rcx, 0
-	mov     rdx, 0x1406 ; GL_FLOAT
-	mov     rsi, 2
-	mov     rdi, 0
+	mov     r9d, 0
+	mov     r8d, 8
+	mov     ecx, 0
+	mov     edx, 0x1406 ; GL_FLOAT
+	mov     esi, 2
+	mov     edi, 0
 	call    glVertexAttribPointer
 
 	; Shader program
 	call    glCreateProgram
-	mov     r12, rax ; program id
+	mov     [gl_program], eax ; program id
 
-	mov     rcx, r12
 	mov     rdx, vert_src_ptr
 	mov     rsi, vert_src_len
-	mov     rdi, 0x8B31 ; GL_VERTEX_SHADER
+	mov     edi, 0x8B31 ; GL_VERTEX_SHADER
 	call    compile_shader
-	mov     r13, rax ; vert shader id
+	mov     r12d, eax ; vert shader id
 
-	mov     rcx, r12
 	mov     rdx, frag_src_ptr
 	mov     rsi, frag_src_len
-	mov     rdi, 0x8B30 ; GL_FRAGMENT_SHADER
+	mov     edi, 0x8B30 ; GL_FRAGMENT_SHADER
 	call    compile_shader
-	mov     r14, rax ; frag shader id
+	mov     r13d, eax ; frag shader id
 
-	mov     rdi, r12
+	mov     edi, [gl_program]
 	call    glLinkProgram
 
-	mov     rdi, r13
+	mov     edi, r12d
 	call    glDeleteShader
-	mov     rdi, r14
+	mov     edi, r13d
 	call    glDeleteShader
-	; r13, r14 are free for use
+	; r12, r13 are free for use
 
 ; This runs repeatedly until the program wants to exit
-main_loop:
+loop_begin:
 	mov     rdi, [glfw_window]
 	call    glfwWindowShouldClose
-	cmp     rax, 1
+	cmp     eax, 1
 	je      exit
 
 	movss   xmm3, [clear_a]
@@ -207,13 +210,28 @@ main_loop:
 	movss   xmm1, [clear_g]
 	movss   xmm0, [clear_r]
 	call    glClearColor
-	mov     rdi, 0x00004000 ; GL_COLOR_BUFFER_BIT
+	mov     edi, 0x00004000 ; GL_COLOR_BUFFER_BIT
 	call    glClear
+
+	mov     edi, [gl_program]
+	call    glUseProgram
+
+	mov     esi, [gl_texture]
+	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
+	call    glBindTexture
+
+	mov     edi, [gl_vao]
+	call    glBindVertexArray
+
+	mov     edx, [verts_len]
+	mov     esi, 0
+	mov     edi, 0x0004 ; GL_TRIANGLES
+	call    glDrawArrays
 
 	mov     rdi, [glfw_window]
 	call    glfwSwapBuffers
 	call    glfwPollEvents
-	jmp     main_loop
+	jmp     loop_begin
 
 ; TODO: Implement error messages
 error:
@@ -228,7 +246,6 @@ exit:
 ; Compiles a shader for OpenGL
 ;
 ; input
-;   rcx: program id
 ;   rdx: src address ptr
 ;   rsi: src len address
 ;   rdi: type
@@ -238,33 +255,32 @@ compile_shader:
 	sub     rsp, 40
 	mov     [rsp+0x00], rsi ; src len address
 	mov     [rsp+0x08], rdx ; src address ptr
-	mov     [rsp+0x10], rcx ; program id
 
 	call    glCreateShader ; type already in rdi
-	mov     [rsp+0x18], rax ; shader id
+	mov     [rsp+0x10], rax ; shader id
 
 	mov     rcx, [rsp+0x00]
 	mov     rdx, [rsp+0x08]
 	mov     rsi, 1
-	mov     rdi, [rsp+0x18]
+	mov     rdi, [rsp+0x10]
 	call    glShaderSource
 
-	mov     rdi, [rsp+0x18]
+	mov     rdi, [rsp+0x10]
 	call    glCompileShader
 
-	lea     rdx, [rsp+0x20] ; compilation success flag
+	lea     rdx, [rsp+0x18] ; compilation success flag
 	mov     rsi, 0x8B81 ; GL_COMPILE_STATUS
-	mov     rdi, [rsp+0x18]
+	mov     rdi, [rsp+0x10]
 	call    glGetShaderiv
 
-	cmp     qword [rsp+0x20], 0
+	cmp     qword [rsp+0x18], 0
 	jne     compile_shader_success
 
 	; Log error if shader compilation failed
 	mov     rcx, msg
 	mov     rdx, 0
 	mov     rsi, 100
-	mov     rdi, [rsp+0x18]
+	mov     rdi, [rsp+0x10]
 	call    glGetShaderInfoLog
 
 	mov     rax, 1 ; write syscall
@@ -276,8 +292,8 @@ compile_shader:
 	jmp     exit
 
 compile_shader_success:
-	mov     rsi, [rsp+0x18]
-	mov     rdi, [rsp+0x10]
+	mov     esi, [rsp+0x18]
+	mov     edi, [gl_program]
 	call    glAttachShader
 
 	mov     rax, [rsp+0x18] ; return shader id
@@ -295,7 +311,8 @@ window_name db 'Cube Games', 0
 ; render data
 glfw_window  rq 1
 gl_texture   rd 1
-gl_vbo       rd 1
+gl_vao       rd 1
+gl_program   rd 1
 logical_w    dd 640
 logical_h    dd 360
 screen       rd 640 * 360
