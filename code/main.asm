@@ -20,9 +20,11 @@ extrn glfwWindowShouldClose
 extrn glfwSwapBuffers
 extrn glfwPollEvents
 extrn glfwTerminate
+extrn glfwGetFramebufferSize
 ; gl
 extrn glClearColor
 extrn glClear
+extrn glViewport
 extrn glGenTextures
 extrn glBindTexture
 extrn glTexParameteri
@@ -119,10 +121,24 @@ _start:
 	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexParameteri
 
+	; debug color texture
+	mov     rdi, 0
+pixel_loop:
+	mov     rax, rdi
+	mov     rdx, 0
+	mov     rcx, 256
+	div     rcx
+
+	lea     rsi, [screen+rdi]
+	mov     byte [rsi], dl
+	inc     rdi
+	cmp     rdi, 921600
+	jne     pixel_loop
+
 	push    0
 	push    screen
-	push    0x1401
-	push    0x1908
+	push    0x1401 ; GL_UNSIGNED_BYTE
+	push    0x1908 ; GL_RGBA
 	mov     r9d, 0
 	mov     r8d, [logical_h]
 	mov     ecx, [logical_w]
@@ -198,12 +214,26 @@ _start:
 	call    glDeleteShader
 	; r12, r13 are free for use
 
+
 ; This runs repeatedly until the program wants to exit
 loop_begin:
 	mov     rdi, [glfw_window]
 	call    glfwWindowShouldClose
 	cmp     eax, 1
 	je      exit
+
+	sub     rsp, 16 ; make space for framebuffer dimensions
+	lea     rdx, [rsp+0x00] ; width
+	lea     rsi, [rsp+0x08] ; height
+	mov     rdi, [glfw_window]
+	call    glfwGetFramebufferSize
+
+	mov     rcx, [rsp+0x00]
+	mov     rdx, [rsp+0x08]
+	mov     rsi, 0
+	mov     rdi, 0
+	call    glViewport
+	add     rsp, 16
 
 	movss   xmm3, [clear_a]
 	movss   xmm2, [clear_b]
@@ -292,11 +322,11 @@ compile_shader:
 	jmp     exit
 
 compile_shader_success:
-	mov     esi, [rsp+0x18]
+	mov     esi, [rsp+0x10]
 	mov     edi, [gl_program]
 	call    glAttachShader
 
-	mov     rax, [rsp+0x18] ; return shader id
+	mov     rax, [rsp+0x10] ; return shader id
 	add     rsp, 40
 	ret
 
@@ -315,7 +345,7 @@ gl_vao       rd 1
 gl_program   rd 1
 logical_w    dd 640
 logical_h    dd 360
-screen       rd 640 * 360
+screen       rb 640 * 360 * 4
 clear_r      dd 0.3
 clear_g      dd 0.1
 clear_b      dd 0.2
