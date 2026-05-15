@@ -121,33 +121,6 @@ _start:
 	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
 	call    glTexParameteri
 
-	; debug color texture
-	mov     rdi, 0
-pixel_loop:
-	mov     rax, rdi
-	mov     rdx, 0
-	mov     rcx, 256
-	div     rcx
-
-	lea     rsi, [screen+rdi]
-	mov     byte [rsi], dl
-	inc     rdi
-	cmp     rdi, logical_w * logical_h * 4
-	jne     pixel_loop
-
-	;push    0
-	;push    screen
-	;push    0x1401 ; GL_UNSIGNED_BYTE
-	;push    0x1908 ; GL_RGBA
-	;mov     r9d, 0
-	;mov     r8d, logical_h
-	;mov     ecx, logical_w
-	;mov     edx, 0x1908 ; GL_RGBA
-	;mov     esi, 0
-	;mov     edi, 0x0DE1 ; GL_TEXTURE_2D
-	;call    glTexImage2D
-	;add     rsp, 32
-
 	; Quad mesh
 	mov     rsi, gl_vao
 	mov     edi, 1
@@ -175,7 +148,6 @@ pixel_loop:
 	mov     esi, ebp
 	mov     edi, 0x8892 ; GL_ARRAY_BUFFER
 	call    glBufferData
-
 
 	mov     edi, 0
 	call    glEnableVertexAttribArray
@@ -222,13 +194,6 @@ loop_begin:
 	cmp     eax, 1
 	je      exit
 
-	; Update pixels
-	mov     edx, 0xff0044ff
-	mov     rsi, 50
-	mov     rdi, [player_x]
-	call    put_color
-	add     [player_x], 3
-
 ;==========================================================
 ; RENDER PROCEDURE
 ; At a high level, our goal is such:
@@ -241,12 +206,60 @@ loop_begin:
 ;    } (summing colors per transparency)
 ;    write pixel to buffer
 ; }
+	mov     rdi, 0
+pixel_loop_begin:
+	; Determine pixel position and color
+
+	; TODO: In both of these division operations, we are moving
+	; the result we want into the register we want manually. Is
+	; there a better way to do this with less instructions?
+	mov     rax, rdi
+	mov     rsi, logical_w
+	mov     rdx, 0
+	div     rsi
+	mov     rsi, rdx ; x = (rdi % w)
+
+	mov     rax, rdi
+	mov     rcx, logical_w
+	div     rcx
+	mov     rcx, rax ; y = (rdi / w)
+
+	add     rsp, 4 ; make space for pixel color
+	mov     byte [rsp+0], 0xff
+	mov     byte [rsp+1], sil
+	mov     byte [rsp+2], cl
+	mov     byte [rsp+3], 0xff
+	mov     ebx, [rsp] ; pixel color
+	sub     rsp, 4 ; no need for rsp space anymore
+
+	; Write color to position
+	xor     rax, rax ; clear rax for mul
+	mov     eax, logical_w
+	mul     rcx
+	mov     rcx, rax
+	add     rcx, rsi ; rcx is now (y * width + x)
+	mov     rax, 4
+	mul     rcx ; multiply r10 by color channels (4)
+	lea     r9, [pixels+rax] ; r9 now pointing to screen pixel
+
+	mov     dword [r9], ebx; Write pixel
+
+	inc     rdi
+	cmp     rdi, pixels_len
+	jl      pixel_loop_begin
+
+	; Update pixels
+	mov     edx, 0xffff0000
+	mov     rsi, 50
+	mov     rdi, [player_x]
+	call    put_color
+	inc     [player_x]
 
 ;===========================================================
 ; UPDATE GL DATA
 
 	push    0
-	push    screen
+	push    pixels
 	push    0x1401 ; GL_UNSIGNED_BYTE
 	push    0x1908 ; GL_RGBA
 	mov     r9d, 0
@@ -371,7 +384,7 @@ compile_shader_success:
 	ret
 
 ;===========================================================
-; Writes an rgb value to the screen buffer.
+; Writes an rgb value to the pixels buffer.
 ;
 ; NOTE: This will likely be inlined as part of the render
 ; loop, obvs
@@ -392,7 +405,7 @@ put_color:
 	add     r10, rdi ; r10 is now (y * width + x)
 	mov     rax, 4
 	mul     r10 ; multiply r10 by color channels (4)
-	lea     r9, [screen+rax] ; r9 now pointing to screen pixel
+	lea     r9, [pixels+rax] ; r9 now pointing to screen pixel
 	mov     r11, [rsp]
 	mov     dword [r9], r11d ; Write pixel
 	sub     rsp, 8
@@ -401,7 +414,11 @@ put_color:
 section '.data' writeable
 ;===========================================================
 
-msglen = 4096
+msglen     = 4096
+logical_w  = 128
+logical_h  = 128
+pixels_len = logical_w * logical_h
+
 msg         rd msglen; general purpose string buffer
 window_name db 'Cube Games', 0
 
@@ -413,9 +430,7 @@ glfw_window  rq 1
 gl_texture   rd 1
 gl_vao       rd 1
 gl_program   rd 1
-logical_w = 128
-logical_h = 128
-screen       rb logical_w * logical_h * 4
+pixels       rb pixels_len * 4
 clear_r      dd 0.3
 clear_g      dd 0.1
 clear_b      dd 0.2
@@ -426,3 +441,4 @@ verts_len    dd 12
 include 'generation/generated_data.asm'
 vert_src_ptr dq vert_src
 frag_src_ptr dq frag_src
+
