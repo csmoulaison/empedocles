@@ -135,19 +135,18 @@ pixel_loop:
 	cmp     rdi, logical_w * logical_h * 4
 	jne     pixel_loop
 
-	push    0
-	push    screen
-	push    0x1401 ; GL_UNSIGNED_BYTE
-	push    0x1908 ; GL_RGBA
-	mov     r9d, 0
-	mov     r8d, logical_h
-	mov     ecx, logical_w
-	mov     edx, 0x1908 ; GL_RGBA
-	mov     esi, 0
-	mov     edi, 0x0DE1 ; GL_TEXTURE_2D
-	call    glTexImage2D
-	add     rsp, 32
-
+	;push    0
+	;push    screen
+	;push    0x1401 ; GL_UNSIGNED_BYTE
+	;push    0x1908 ; GL_RGBA
+	;mov     r9d, 0
+	;mov     r8d, logical_h
+	;mov     ecx, logical_w
+	;mov     edx, 0x1908 ; GL_RGBA
+	;mov     esi, 0
+	;mov     edi, 0x0DE1 ; GL_TEXTURE_2D
+	;call    glTexImage2D
+	;add     rsp, 32
 
 	; Quad mesh
 	mov     rsi, gl_vao
@@ -230,6 +229,22 @@ loop_begin:
 	call    put_color
 	add     [player_x], 3
 
+;==========================================================
+; RENDER PROCEDURE
+; At a high level, our goal is such:
+; for each pixel {
+;    map pixel to a viewport position
+;    cast ray from origin through viewport
+;    for each cube {
+;        determine if cube intersects
+;        store cube color
+;    } (summing colors per transparency)
+;    write pixel to buffer
+; }
+
+;===========================================================
+; UPDATE GL DATA
+
 	push    0
 	push    screen
 	push    0x1401 ; GL_UNSIGNED_BYTE
@@ -243,7 +258,6 @@ loop_begin:
 	call    glTexImage2D
 	add     rsp, 32
 
-	; Update renderer
 	sub     rsp, 16 ; make space for framebuffer dimensions
 	lea     rdx, [rsp+0x00] ; width
 	lea     rsi, [rsp+0x08] ; height
@@ -279,6 +293,9 @@ loop_begin:
 	mov     esi, 0
 	mov     edi, 0x0004 ; GL_TRIANGLES
 	call    glDrawArrays
+
+;===========================================================
+; LOOP END
 
 	mov     rdi, [glfw_window]
 	call    glfwSwapBuffers
