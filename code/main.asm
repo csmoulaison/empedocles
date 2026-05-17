@@ -1,8 +1,18 @@
+;===========================================================
+; TODOS
+; - Tracing against AABBs
+; - Arbitary voxel grid roation (cam/viewport transform)
+; - Multithreading with sys_clone call
+; - SIMD instructions
+;===========================================================
+
 format ELF64
 
 ;===========================================================
 section '.text' executable
 ;===========================================================
+
+include 'vec3.asm'
 
 ; When linking with gl3w, we ge an undefined reference to
 ; __dso_handle. This shit is a little too esoteric for my
@@ -94,9 +104,7 @@ _start:
 
     ; Initialize OpenGL. We will need a texture and a quad to
     ; render across the screen as well as a shader program
-
-    ; Screen texture
-    mov     rsi, gl_texture
+    mov     rsi, gl_texture     ; Screen texture
     mov     rdi, 1
     call    glGenTextures
 
@@ -141,8 +149,8 @@ _start:
 
     mov     ebx, [verts_len]
     mov     ebp, 4
-    ; TODO: learn about mul and imul. something something lower bits
-    imul    ebp, ebx
+    imul    ebp, ebx            ; TODO: learn about mul and imul. something
+                                ; something lower bits
     mov     ecx, 0x88E4         ; GL_STATIC_DRAW
     mov     rdx, verts
     mov     esi, ebp
@@ -187,6 +195,7 @@ _start:
 ;===========================================================
 ; MAIN LOOP:
 ; This runs repeatedly until the program wants to exit
+;===========================================================
 loop_begin:
     mov     rdi, [glfw_window]
     call    glfwWindowShouldClose
@@ -215,7 +224,62 @@ loop_begin:
 ; by scaling and adding x and y vectors along the viewport
 ; by the same ratio of pixel to screen size. We then add a
 ; random amount to the resulting viewport position such
-; that our resulting position is
+; that our final position is randomly placed within the
+; bounds of the viewport "pixel". We define the ray as
+; (viewport_pos - cam_pos), which in this case is the same
+; as viewport_pos, since the camera is at the origin.
+;   (cam_pos will eventually be defined so that we can
+;    rotate the camera around the voxels)
+;
+; We intersect the ray against 9 axis aligned cubes, summing
+; the "time spent" by the ray in each cube to get our final
+; color.
+;===========================================================
+
+    sub     rsp, 0x90           ; reserve space for rendering
+
+    ; 0x00-0x40 are persistent throughout the procedure:
+    ; [0x00] vec3: viewport pixel delta u
+    ; [0x10] vec3: viewport pixel delta v
+    ; [0x20] vec3: viewport origin
+    ; 0x40-0x80 are as such during initialization:
+    ; [0x50] look from basis u
+    ; [0x60] look from basis v
+    ; [0x70] look from basis w
+    ; [0x80] up vector
+
+    lea     rdi, [lookfrom]     ; calculate basis w
+    movaps  xmm0, [rdi]         ; xmm0 has lookfrom
+    lea     rdi, [lookat]
+    movaps  xmm1, [rdi]         ; xmm1 has lookat
+    subps   xmm0, xmm1          ; xmm0 has from->at delta
+
+    movaps  [rsp+0x50], xmm0
+    v3norm  [rsp+0x50], [rsp+0x50], xmm0, xmm1, xmm2
+                                ; now xmm0-3 are free and 0x50 has basis w
+
+    ; We are more or less doing this at the moment:
+    ;   (https://raytracing.github.io/books/RayTracingInOneWeekend.html)
+
+    lea     rdi, [upvector] ; calculate basis u
+    lea     rsi, [rsp+0x80]
+    ; basis u = v3cross(upvector, basis_w)
+    ; basis v = v3cross(basis_w, basis_u)
+
+    ; viewport_u = scale(viewport_w * basis_u)
+    ; viewport_v = scale(viewport_h * -basis_v)
+
+    ; viewport_pixel_delta_u = div(viewport_u, pixels_w)
+    ; viewport_pixel_delta_v = div(viewport_w, pixels_h)
+
+    ; viewport_origin =
+    ;   cam_origin - (focal_length * basis_w)
+    ;     - div(viewport_u, 2,0) - div(viewport_v, 2.0)
+
+    ; pixel00 =
+    ;   add(viewport_origin, scale(add(vpd_u, vpd_v), 0.5));
+
+    add     rsp, 0x90
 
     mov     rdi, 0
 pixel_loop_begin:
@@ -226,17 +290,20 @@ pixel_loop_begin:
     ; manually. Is there a better way to do this with less
     ; instructions?
     mov     rax, rdi
-    mov     rsi, logical_w
+    mov     rsi, pixels_w
     mov     rdx, 0
     div     rsi
     mov     rsi, rdx            ; x = (rdi % w)
 
     mov     rax, rdi
-    mov     rcx, logical_w
+    mov     rcx, pixels_w
     div     rcx
     mov     rcx, rax            ; y = (rdi / w)
 
-    add     rsp, 4              ; reserve 32 bits for color
+    ; When we get to testing AABB intersection:
+    ;   (https://tavianator.com/2022/ray_box_boundary.html)
+
+    add     rsp, 4              ; reserve 4 bytes for color
     mov     byte [rsp+0], 0xff
     mov     byte [rsp+1], sil
     mov     byte [rsp+2], cl
@@ -246,7 +313,7 @@ pixel_loop_begin:
 
     ; Write color to position
     xor     rax, rax            ; clear rax for mul
-    mov     eax, logical_w
+    mov     eax, pixels_w
     mul     rcx
     mov     rcx, rax
     add     rcx, rsi            ; rcx is now (y * width + x)
@@ -267,17 +334,14 @@ pixel_loop_begin:
     call    put_color
     inc     [player_x]
 
-;===========================================================
-; UPDATE GL DATA
-
-
+    ; Update GL data
     push    0
     push    pixels
     push    0x1401              ; GL_UNSIGNED_BYTE
     push    0x1908              ; GL_RGBA
     mov     r9d, 0
-    mov     r8d, logical_h
-    mov     ecx, logical_w
+    mov     r8d, pixels_h
+    mov     ecx, pixels_w
     mov     edx, 0x1908         ; GL_RGBA
     mov     esi, 0
     mov     edi, 0x0DE1         ; GL_TEXTURE_2D
@@ -320,16 +384,13 @@ pixel_loop_begin:
     mov     edi, 0x0004         ; GL_TRIANGLES
     call    glDrawArrays
 
-;===========================================================
-; LOOP END
-
-    mov     rdi, [glfw_window]
+    mov     rdi, [glfw_window]  ; Main loop end
     call    glfwSwapBuffers
     call    glfwPollEvents
     jmp     loop_begin
 
-; TODO: Implement error messages
-error:
+
+error:                          ; TODO: Implement error messages
     jmp     exit
 
 exit:
@@ -338,7 +399,7 @@ exit:
     xor     rdi, rdi
     syscall 
 
-; ==========================================================
+;===========================================================
 ; Compiles a shader for OpenGL.
 ;
 ; input
@@ -347,6 +408,7 @@ exit:
 ;   rdi: type
 ; output
 ;   rax: shader id
+;===========================================================
 compile_shader:
     sub     rsp, 40
     mov     [rsp+0x00], rsi     ; src len address
@@ -372,8 +434,8 @@ compile_shader:
     cmp     qword [rsp+0x18], 0
     jne     compile_shader_success
 
-    ; Log error if shader compilation failed
-    mov     rcx, msg
+    
+    mov     rcx, msg            ; Log error if shader compilation failed
     mov     rdx, 0
     mov     rsi, msglen
     mov     rdi, [rsp+0x10]
@@ -407,12 +469,13 @@ compile_shader_success:
 ;   rsi: y
 ;   rdi: x
 ; output: none
+;===========================================================
 put_color:
     add     rsp, 8
     mov     [rsp], edx
     mov     r10, rsi
     xor     rax, rax
-    mov     eax, logical_w
+    mov     eax, pixels_w
     mul     r10
     mov     r10, rax
     add     r10, rdi            ; r10 is now (y * width + x)
@@ -424,34 +487,44 @@ put_color:
     sub     rsp, 8
 
 ;===========================================================
-section '.data' writeable
+section '.data' writeable align 16
 ;===========================================================
 
 msglen     = 4096
-logical_w  = 128
-logical_h  = 128
-pixels_len = logical_w * logical_h
+pixels_w   = 128
+pixels_h   = 128
+pixels_len = pixels_w * pixels_h
 
 msg         rd msglen           ; general purpose string buffer
 window_name db 'Cube Games', 0
 
 ; game state
-player_x     dq 0
+player_x dq 0
+align 16
+lookfrom dd 0.0, 0.0, 0.0, 0.0
+align 16
+lookat   dd 0.0, 0.0, -1.0, 0.0
 
 ; render data
-glfw_window  rq 1
-gl_texture   rd 1
-gl_vao       rd 1
-gl_program   rd 1
 pixels       rb pixels_len * 4
 clear_r      dd 0.3
 clear_g      dd 0.1
 clear_b      dd 0.2
 clear_a      dd 1.0
+viewport_h   dd 2.0
+viewport_w   dd 2.0
+focal_length dd 1.0
+align 16
+upvector     dd 2.0, 1.0, 4.0, 0.0
+
+; gl data
+glfw_window  rq 1
+gl_texture   rd 1
+gl_vao       rd 1
+gl_program   rd 1
 verts        dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
 verts_len    dd 12
 
 include 'generation/generated_data.asm'
 vert_src_ptr dq vert_src
 frag_src_ptr dq frag_src
-

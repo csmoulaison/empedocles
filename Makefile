@@ -1,6 +1,7 @@
 MAKEFLAGS += -r
 GEN_DIR = code/generation
 SHADERS = code/shaders/screen.vert code/shaders/screen.frag
+INCLUDED = code/vec3.asm
 
 # Root targets
 bin/cube_games: build/main.o build/gl3w.o
@@ -22,7 +23,7 @@ clean:
 	rm -f $(GEN_DIR)/generated_data.asm
 
 # Leafier targets
-build/main.o: code/main.asm $(GEN_DIR)/generated_data.asm
+build/main.o: code/main.asm $(INCLUDED) $(GEN_DIR)/generated_data.asm
 	fasm code/main.asm build/main.o
 
 $(GEN_DIR)/generated_data.asm: $(SHADERS) $(GEN_DIR)/generate
