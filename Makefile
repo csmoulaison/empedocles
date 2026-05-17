@@ -24,7 +24,7 @@ clean:
 
 # Leafier targets
 build/main.o: code/main.asm $(INCLUDED) $(GEN_DIR)/generated_data.asm
-	fasm code/main.asm build/main.o
+	fasm code/main.asm build/main.o -m 1000000
 
 $(GEN_DIR)/generated_data.asm: $(SHADERS) $(GEN_DIR)/generate
 	$(GEN_DIR)/generate

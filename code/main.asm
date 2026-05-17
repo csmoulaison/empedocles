@@ -234,54 +234,92 @@ loop_begin:
 ; We intersect the ray against 9 axis aligned cubes, summing
 ; the "time spent" by the ray in each cube to get our final
 ; color.
+;
+; We are more or less doing this at the moment:
+;   (https://raytracing.github.io/books/RayTracingInOneWeekend.html)
 ;===========================================================
+    ; Initialization is dedicated to getting these values,
+    ; and these registers will be stable throughout the
+    ; inner pixel loop:
+    ;   xmm12: pixel delta u
+    ;   xmm13: pixel delta v
+    ;   xmm14: pixel center at uv (0,0)
+    ;   xmm15: look from, camera origin
+    lea     rdi, [v4_lookfrom]
+    movaps  xmm10, [rdi]        ; xmm10 has lookfrom
 
-    sub     rsp, 0x90           ; reserve space for rendering
+    ; Calculate camera basis vectors:
+    ;   xmm8  <- u = norm(cross(up, w))
+    ;   xmm9  <- v = cross(w, u)
+    ;   xmm10 <- = norm(from - at)
+    ; xmm10 must remain stable until the viewport origin has
+    ; been calculated.
+    movaps  xmm10, xmm15        ; xmm10: lookfrom
+    lea     rdi, [v4_lookat]
+    movaps  xmm1, [rdi]         ; xmm1: lookat
+    subps   xmm10, xmm1         ; xmm0: from - to
+    v3norm  xmm10               ; xmm10: basis w
 
-    ; 0x00-0x40 are persistent throughout the procedure:
-    ; [0x00] vec3: viewport pixel delta u
-    ; [0x10] vec3: viewport pixel delta v
-    ; [0x20] vec3: viewport origin
-    ; 0x40-0x80 are as such during initialization:
-    ; [0x50] look from basis u
-    ; [0x60] look from basis v
-    ; [0x70] look from basis w
-    ; [0x80] up vector
+    lea     rdi, [v4_upvector]
+    movaps  xmm8, [rdi]         ; xmm0: upvector
+    movaps  xmm1, xmm10         ; xmm1: basis w
+    v3cross xmm8, xmm1
+    v3norm  xmm8                ; xmm8: basis u
 
-    lea     rdi, [lookfrom]     ; calculate basis w
-    movaps  xmm0, [rdi]         ; xmm0 has lookfrom
-    lea     rdi, [lookat]
-    movaps  xmm1, [rdi]         ; xmm1 has lookat
-    subps   xmm0, xmm1          ; xmm0 has from->at delta
+    movaps  xmm9, xmm10
+    movaps  xmm1, xmm8
+    v3cross xmm9, xmm1          ; xmm0: basis v
 
-    movaps  [rsp+0x50], xmm0
-    v3norm  [rsp+0x50], [rsp+0x50], xmm0, xmm1, xmm2
-                                ; now xmm0-3 are free and 0x50 has basis w
+    ; viewport_u = scale(viewport_w, basis_u)
+    ; viewport_v = scale(-viewport_h, basis_v)
+    lea     rdi, [v4_viewport_w]
+    movaps  xmm1, [rdi]
+    mulps   xmm8, xmm1          ; xmm8: viewport u
 
-    ; We are more or less doing this at the moment:
-    ;   (https://raytracing.github.io/books/RayTracingInOneWeekend.html)
+    lea     rdi, [v4_viewport_h]; viewport_h is negative because y coordinates
+    movaps  xmm1, [rdi]
+    mulps   xmm9, xmm1          ; xmm9: viewport v
 
-    lea     rdi, [upvector] ; calculate basis u
-    lea     rsi, [rsp+0x80]
-    ; basis u = v3cross(upvector, basis_w)
-    ; basis v = v3cross(basis_w, basis_u)
+    ; pixel_u = div(viewport_u, pixels_w)
+    ; pixel_v = div(viewport_w, pixels_h)
+    movaps  xmm12, xmm8
+    lea     rdi,  [v4_pixels_w]
+    movaps  xmm0, [rdi]
+    divps   xmm12, xmm0         ; xmm12: pixel delta u
 
-    ; viewport_u = scale(viewport_w * basis_u)
-    ; viewport_v = scale(viewport_h * -basis_v)
+    movaps  xmm13, xmm9
+    lea     rdi,  [v4_pixels_h]
+    movaps  xmm0, [rdi]
+    divps   xmm13, xmm0         ; xmm13: pixel delta v
 
-    ; viewport_pixel_delta_u = div(viewport_u, pixels_w)
-    ; viewport_pixel_delta_v = div(viewport_w, pixels_h)
+    ; viewport_origin = lookfrom - (focal_length * basis_w) - div(viewport_u, 2,0) - div(viewport_v, 2.0)
+    lea     rdi, [v4_focal_len]
+    movaps  xmm14, [rdi]        ; using xmm14, we will eventually build pixel00
+    mulps   xmm14, xmm10        ; xmm10 should be basis_w still, which means...
+                                ; xmm14: focal_length * basis_w
+                                ; xmm10 is now free for use
+    subps   xmm14, xmm15        ; xmm14: lookfrom - (focal_length * basis_w)
+    lea     rdi, [v4_half]
+    movaps  xmm0, [rdi]         ; xmm0: v4(0.5) also used in pixel00 calculation
+    mulps   xmm8, xmm0          ; xmm8: div(viewport_u, 2.0)
+    mulps   xmm9, xmm0          ; xmm9: div(viewport_v, 2.0)
+    subps   xmm14, xmm8
+    subps   xmm14, xmm9         ; xmm14: viewport_origin
 
-    ; viewport_origin =
-    ;   cam_origin - (focal_length * basis_w)
-    ;     - div(viewport_u, 2,0) - div(viewport_v, 2.0)
+    ; pixel00 = viewport_origin + (0.5 * (pixel_delta_u + pixel_delta_v));
+    movaps  xmm1, xmm12         ; xmm1: pixel_delta_u
+    addps   xmm1, xmm13         ; xmm1: pd_u + pd_v
+    mulps   xmm1, xmm0          ; xmm1: 0.5 * (pd_u + pd_v)
+    addps   xmm14, xmm1         ; xmm14: pixel00
 
-    ; pixel00 =
-    ;   add(viewport_origin, scale(add(vpd_u, vpd_v), 0.5));
+; We've gathered the values listed above in xmm12-15 and
+; now it's time to do the tight pixel loop.
+;
+; For now, we assume SSE 4.2 suppport. Once we get to deeper
+; optimizations, we should make versions of this loop for
+; sse 4.2, avx, avx2, and avx512
 
-    add     rsp, 0x90
-
-    mov     rdi, 0
+    mov     rdi, 0              ; rdi is the pixel counter and must be stable
 pixel_loop_begin:
     ; Determine pixel position and color
 
@@ -318,7 +356,7 @@ pixel_loop_begin:
     mov     rcx, rax
     add     rcx, rsi            ; rcx is now (y * width + x)
     mov     rax, 4
-    mul     rcx                 ; multiply r10 by color channels (4)
+    mul     rcx                 ; multiply r10 by 4 color channels
     lea     r9, [pixels+rax]    ; r9 now pointing to screen pixel
 
     mov     dword [r9], ebx     ; Write pixel
@@ -491,6 +529,7 @@ section '.data' writeable align 16
 ;===========================================================
 
 msglen     = 4096
+; WARNING: v4_pixels__ below needs to match these
 pixels_w   = 128
 pixels_h   = 128
 pixels_len = pixels_w * pixels_h
@@ -500,10 +539,6 @@ window_name db 'Cube Games', 0
 
 ; game state
 player_x dq 0
-align 16
-lookfrom dd 0.0, 0.0, 0.0, 0.0
-align 16
-lookat   dd 0.0, 0.0, -1.0, 0.0
 
 ; render data
 pixels       rb pixels_len * 4
@@ -511,11 +546,25 @@ clear_r      dd 0.3
 clear_g      dd 0.1
 clear_b      dd 0.2
 clear_a      dd 1.0
-viewport_h   dd 2.0
-viewport_w   dd 2.0
-focal_length dd 1.0
+; Aligned and quadrupled for use in xmm registers
 align 16
-upvector     dd 2.0, 1.0, 4.0, 0.0
+v4_half       dd 0.5, 0.5, 0.5, 0.5
+align 16
+v4_focal_len  dd 1.0
+align 16
+v4_upvector   dd 0.0, 1.0, 0.0, 0.0
+align 16
+v4_viewport_h dd -2.0, -2.0, -2.0, -2.0
+align 16
+v4_viewport_w dd 2.0, 2.0, 2.0, 2.0
+align 16
+v4_pixels_w   dd 128.0, 128.0, 128.0, 128.0
+align 16
+v4_pixels_h   dd 128.0, 128.0, 128.0, 128.0
+align 16
+v4_lookfrom   dd 0.0, 0.0, 0.0, 0.0
+align 16
+v4_lookat     dd 0.0, 0.0, -1.0, 0.0
 
 ; gl data
 glfw_window  rq 1
