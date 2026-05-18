@@ -211,56 +211,36 @@ loop_begin:
     ;   y = dist * cos(phi);
     ;   z = dist * sin(phi) * sin(theta);
     ; theta being left/right and phi being up/down
-    mov     edi, [cam_theta]
-    movd    xmm0, edi           ; xmm0, cam_theta
+    movss   xmm0, [cam_theta]   ; xmm0, cam_theta
     addss   xmm0, [cam_theta_per_sec]
-    lea     r9, [cam_theta]
-    movd    [r9], xmm0          ; cam_theta += cam_theta_per_second
+    movss   [cam_theta], xmm0   ; cam_theta += cam_theta_per_second
 
     movss   xmm0, [cam_theta]
     call    cosf
-    movss   xmm1, xmm0          ; xmm1: cos(theta)
+    movss   xmm6, xmm0          ; xmm6: cos(theta)
     movss   xmm0, [cam_phi]
     call    sinf
-    movss   xmm2, xmm0          ; xmm2: sin(phi)
+    movss   xmm7, xmm0          ; xmm7: sin(phi)
     movss   xmm0, [cam_phi]
     call    cosf
-    movss   xmm3, xmm0          ; xmm3: cos(phi)
+    movss   xmm8, xmm0          ; xmm8: cos(phi)
     movss   xmm0, [cam_theta]
     call    sinf                ; xmm0: sin(theta)
 
-    lea     r9, [cam_dist]      ; xmm4-6 will be x,y,z
-    cvtss2sd xmm4, [cam_dist]
-    cvtss2sd xmm5, [cam_dist]
-    cvtss2sd xmm6, [cam_dist]          ; xmm4-6: cam_dist
+    lea     r9, [cam_dist]      ; xmm9-11 will be x,y,z
+    movss   xmm9, [cam_dist]
+    movss   xmm10, [cam_dist]
+    movss   xmm11, [cam_dist]   ; xmm9-11: cam_dist
 
-    mulss   xmm4, xmm2          ; xmm4: dist * sin(phi)
-    mulss   xmm4, xmm1          ; xmm4: x = dist * sin(phi) * cos(theta)
-    mulss   xmm5, xmm3          ; xmm5: y = dist * cos(phi)
-    mulss   xmm6, xmm0          ; xmm6: dist * sin(theta)
-    mulss   xmm6, xmm2          ; xmm6: z = dist * sin(phi) * sin(theta)
+    mulss   xmm9, xmm7          ; xmm4: dist * sin(phi)
+    mulss   xmm9, xmm6          ; xmm4: x = dist * sin(phi) * cos(theta)
+    mulss   xmm10, xmm8         ; xmm5: y = dist * cos(phi)
+    mulss   xmm11, xmm0         ; xmm6: dist * sin(theta)
+    mulss   xmm11, xmm7         ; xmm6: z = dist * sin(phi) * sin(theta)
 
-    ; TODO: fix this stuff. This seems to work, theta is
-    ; updating, and xmm4,5,6 seem to contain the correct
-    ; values, but moving them to v4_lookfrom doesn't seem
-    ; to be effective.
-    ;mov     eax, 3
-    ;movss   xmm2, xmm4
-    ;movss   xmm1, xmm5
-    ;movss   xmm0, xmm6
-    ;mov     rdi, debug_msg
-    ;call    printf
-
-    movss   [v4_lookfrom+0x00], xmm4
-    movss   [v4_lookfrom+0x04], xmm5
-    movss   [v4_lookfrom+0x08], xmm6
-
-    mov     eax, 3
-    movss   xmm2, [v4_lookfrom+0x00]
-    movss   xmm1, [v4_lookfrom+0x04]
-    movss   xmm0, [v4_lookfrom+0x08]
-    mov     rdi, debug_msg
-    call    printf
+    movss   [v4_lookfrom+0x00], xmm9
+    movss   [v4_lookfrom+0x04], xmm10
+    movss   [v4_lookfrom+0x08], xmm11
 
 ;===========================================================
 ; RENDER PROCEDURE
@@ -305,8 +285,7 @@ loop_begin:
     ;   xmm13: pixel delta v
     ;   xmm14: pixel center at uv (0,0)
     ;   xmm15: look from, camera origin
-    lea     rdi, [v4_lookfrom]
-    movaps  xmm15, [rdi]        ; xmm15 has lookfrom
+    movaps  xmm15, dqword [v4_lookfrom]        ; xmm15 has lookfrom
 
     ; Calculate camera basis vectors:
     ;   xmm8  <- u = norm(cross(up, w))
@@ -315,13 +294,11 @@ loop_begin:
     ; xmm10 must remain stable until the viewport origin has
     ; been calculated.
     movaps  xmm10, xmm15        ; xmm10: lookfrom
-    lea     rdi, [v4_lookat]
-    movaps  xmm1, [rdi]         ; xmm1: lookat
+    movaps  xmm1, dqword [v4_lookat] ; xmm1: lookat
     subps   xmm10, xmm1         ; xmm0: from - to
     v3norm  xmm10               ; xmm10: basis w
 
-    lea     rdi, [v4_upvector]
-    movaps  xmm8, [rdi]         ; xmm0: upvector
+    movaps  xmm8, dqword [v4_upvector] ; xmm0: upvector
     movaps  xmm1, xmm10         ; xmm1: basis w
     v3cross xmm8, xmm1
     v3norm  xmm8                ; xmm8: basis u
@@ -332,35 +309,29 @@ loop_begin:
 
     ; viewport_u = scale(viewport_w, basis_u)
     ; viewport_v = scale(-viewport_h, basis_v)
-    lea     rdi, [v4_viewport_w]
-    movaps  xmm1, [rdi]
+    movaps  xmm1, dqword [v4_viewport_w]
     mulps   xmm8, xmm1          ; xmm8: viewport u
 
-    lea     rdi, [v4_viewport_h]; viewport_h is negative because y coordinates
-    movaps  xmm1, [rdi]
+    movaps  xmm1, dqword [v4_viewport_h] ; viewport_h is negative because y coordinates
     mulps   xmm9, xmm1          ; xmm9: viewport v
 
     ; pixel_u = div(viewport_u, pixels_w)
     ; pixel_v = div(viewport_w, pixels_h)
     movaps  xmm12, xmm8
-    lea     rdi,  [v4_pixels_w]
-    movaps  xmm0, [rdi]
+    movaps  xmm0, dqword [v4_pixels_w]
     divps   xmm12, xmm0         ; xmm12: pixel delta u
 
     movaps  xmm13, xmm9
-    lea     rdi,  [v4_pixels_h]
-    movaps  xmm0, [rdi]
+    movaps  xmm0, dqword [v4_pixels_h]
     divps   xmm13, xmm0         ; xmm13: pixel delta v
 
     ; viewport_origin = lookfrom - (focal_length * basis_w) - div(viewport_u, 2,0) - div(viewport_v, 2.0)
-    lea     rdi, [v4_focal_len]
-    movaps  xmm14, [rdi]        ; using xmm14, we will eventually build pixel00
+    movaps  xmm14, dqword [v4_focal_len] ; using xmm14, we will eventually build pixel00
     mulps   xmm14, xmm10        ; xmm10 should be basis_w still, which means...
                                 ; xmm14: focal_length * basis_w
                                 ; xmm10 is now free for use
     subps   xmm14, xmm15        ; xmm14: lookfrom - (focal_length * basis_w)
-    lea     rdi, [v4_half]
-    movaps  xmm0, [rdi]         ; xmm0: v4(0.5) also used in pixel00 calculation
+    movaps  xmm0, dqword [v4_half] ; xmm0: v4(0.5) also used in pixel00 calculation
     mulps   xmm8, xmm0          ; xmm8: div(viewport_u, 2.0)
     mulps   xmm9, xmm0          ; xmm9: div(viewport_v, 2.0)
     subps   xmm14, xmm8
@@ -410,76 +381,22 @@ nodbg:
     addps   xmm0, xmm14         ; xmm0: pixel center
     subps   xmm0, xmm15         ; xmm0: ray direction
     v3norm  xmm0
-    lea     r8, [abs_mask]
-    andps   xmm0, [r8]          ; xmm0: absolute value for color
-    lea     r8, [v4_255]
-    mulps   xmm0, [r8]          ; xmm0 scaled by 255
+    andps   xmm0, dqword [abs_mask] ; xmm0: absolute value for color
+    mulps   xmm0, dqword [v4_255] ; xmm0 scaled by 255 for rgb space
+    mulps   xmm0, dqword [v4_viewport_w] ; causing an overflow makes for a
+                                         ; really cool pattern
 
-    sub     rsp, 16
-    movaps  [rsp], xmm0
-    cvttss2si r8d, [rsp+0x00]
-    cvttss2si r9d, [rsp+0x04]
-    cvttss2si r10d, [rsp+0x08]
-    cvttss2si r11d, [rsp+0x0C]
-    add     rsp, 16
-
-    ;cmp     r8d, 512
-    ;jge     exit
-    ;cmp     r9d, 512
-    ;jge     exit
-    ;cmp     r10d, 512
-    ;jge     exit
-    ;cmp     r11d, 512
-    ;jge     exit
-    
-    lea     r12, [pixels+rdi*4]  ; r12: pixel address
-    mov     byte [r12+0x00], r10b ; r
-    mov     byte [r12+0x01], r9b; g
-    mov     byte [r12+0x02], r8b; b
-    mov     byte [r12+0x03], 0xff ; a
+    cvtps2dq xmm0, xmm0         ; convert to dword integers
+    packusdw xmm0, xmm0         ; pack into 16bit words
+    packuswb xmm0, xmm0         ; pack into bytes
+    movd     dword [pixels+rdi*4], xmm0 ; move to pixel location
 
     ; Branchless ray/bounding box intersection:
     ;   (https://tavianator.com/2022/ray_box_boundary.html)
 
-    ; Define gradient color
-    ;add     rsp, 4              ; reserve 4 bytes for color
-    ;mov     byte [rsp+0], 0xff
-    ;mov     byte [rsp+1], sil
-    ;mov     byte [rsp+2], cl
-    ;mov     byte [rsp+3], 0xff
-    ;mov     ebx, [rsp]          ; ebx now has color
-    ;sub     rsp, 4              ; free color bits
-
-    ; Write gradient color to position
-    ;xor     rax, rax            ; clear rax for mul
-    ;mov     eax, pixels_w
-    ;mul     rcx
-    ;mov     rcx, rax
-    ;add     rcx, rsi            ; rcx is now (y * width + x)
-    ;mov     rax, 4
-    ;mul     rcx                 ; multiply r10 by 4 color channels
-    ;lea     r9, [pixels+rax]    ; r9 now pointing to screen pixel
-    ;mov     dword [r9], ebx     ; Write pixel
-
-    ;lea     r12, [pixels+rdi*4]  ; r12: pixel address
-    ;mov     dword [r12], ebx     ; Write pixel
-
     inc     edi
     cmp     edi, pixels_len
     jl      pixel_loop_begin
-
-
-    ; End of loop
-    ;inc     rdi
-    ;cmp     rdi, pixels_len
-    ;jl      pixel_y_begin
-
-    ; Draw "player" pixel
-    ;mov     edx, 0xffff0000
-    ;mov     rsi, 50
-    ;mov     rdi, [player_x]
-    ;call    put_color
-    ;inc     [player_x]
 
     ; Update GL data
     push    0
@@ -639,17 +556,14 @@ section '.data' writeable align 16
 
 msglen     = 4096
 ; WARNING: v4_pixels__ below needs to match these
-pixels_w   = 256
-pixels_h   = 256
+pixels_w   = 1024
+pixels_h   = 1024
 pixels_len = pixels_w * pixels_h
 
 msg         rd msglen           ; general purpose string buffer
 window_name db 'Cube Games', 0
 
 debug_msg   db 'cam %f, %f, %f', 10, 0
-
-; game state
-player_x dq 0
 
 ; render data
 align 16
@@ -658,7 +572,7 @@ clear_r           dd 0.3
 clear_g           dd 0.1
 clear_b           dd 0.2
 clear_a           dd 1.0
-i_pixels_w        dd 256
+i_pixels_w        dd pixels_w
 cam_theta         dd 1.1
 cam_phi           dd 1.1
 cam_theta_per_sec dd 0.01
@@ -679,13 +593,13 @@ v4_viewport_h dd -2.0, -2.0, -2.0, -2.0
 align 16
 v4_viewport_w dd 2.0, 2.0, 2.0, 2.0
 align 16
-v4_pixels_w   dd 256.0, 256.0, 256.0, 256.0
+v4_pixels_w   dd 1024.0, 1024.0, 1024.0, 1024.0
 align 16
-v4_pixels_h   dd 256.0, 256.0, 256.0, 256.0
+v4_pixels_h   dd 1024.0, 1024.0, 1024.0, 1024.0
 align 16
 v4_lookfrom   dd 0.0, 0.0, 0.0, 0.0
 align 16
-v4_lookat     dd 0.0, 0.0, 1.0, 0.0
+v4_lookat     dd 0.0, 0.0, 0.0, 0.0
 align 16
 abs_mask      dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF
 
