@@ -227,8 +227,7 @@ loop_begin:
     movss   xmm0, [cam_theta]
     call    sinf                ; xmm0: sin(theta)
 
-    lea     r9, [cam_dist]      ; xmm9-11 will be x,y,z
-    movss   xmm9, [cam_dist]
+    movss   xmm9, [cam_dist]    ; xmm9-11 will be x,y,z
     movss   xmm10, [cam_dist]
     movss   xmm11, [cam_dist]   ; xmm9-11: cam_dist
 
@@ -241,6 +240,13 @@ loop_begin:
     movss   [v4_lookfrom+0x00], xmm9
     movss   [v4_lookfrom+0x04], xmm10
     movss   [v4_lookfrom+0x08], xmm11
+
+    ;mov     rax, 3
+    ;cvtss2sd xmm2, xmm9
+    ;cvtss2sd xmm1, xmm10
+    ;cvtss2sd xmm0, xmm11
+    ;mov     rdi, debug_msg
+    ;call    printf
 
 ;===========================================================
 ; RENDER PROCEDURE
@@ -356,44 +362,121 @@ loop_begin:
 ; Cube mins/maxes are packed into stack memory, and the
 ; blah blah you get the picture. Let's try to do shitty
 ; first then work with simd shit.
+;
+; NOTE: when we multithread/simd, doing square chunks of the
+; screen makes no sense both for cache locality and perhaps
+; more importantly, for distributing work equally. The
+; corners of the screen, for instance, will have less
+; intersections than the center. So, we should instead have
+; each execution unit process a row of pixels at a time,
+; skipping rows equalling the number of threads so that each
+; thread hypothetically touches the cuby bits a roughly
+; equal number of times. This might mean a cache miss every
+; time a row is done, but I feel like we still win over the
+; stalling that would obviously happen if we chunked it up
+; differently. Maybe try to find the right balance. Not
+; rows perhaps, but some number of pixels processed before
+; skipping. Could graph it!
 
     xor     edi, edi             ; edi: pixel counter
 pixel_loop_begin:
-    cmp     rdi, 1024
-    jg      dbg
-    jmp     nodbg
-dbg:
-    nop
-nodbg:
     xor     edx, edx
     mov     eax, edi
     div     dword [i_pixels_w]
     mov     esi, edx            ; esi: x = (i % w)
     mov     ecx, eax            ; ecx: y = (i / w)
 
-    cvtsi2ss xmm0, esi
+    ; First we deterine the ray direction by finding the
+    ; point on the viewport which correlates with the
+    ; current pixel coordinates, then taking the delta
+    ; between that position and the camera origin and
+    ; normalizing it.
+    ;
+    ; TODO: sample a random point within the viewport pixel
+    cvtsi2ss xmm11, esi         ; xmm11 will become ray direction
     cvtsi2ss xmm1, ecx
-    shufps  xmm0, xmm0, 0       ; xmm0: x
+    shufps  xmm11, xmm11, 0     ; xmm11: x
     shufps  xmm1, xmm1, 0       ; xmm1: y
-    mulps   xmm0, xmm12         ; xmm0: y * pixel_delta_u
+    mulps   xmm11, xmm12        ; xmm11: y * pixel_delta_u
     mulps   xmm1, xmm13         ; xmm1: x * pixel_delta_v
-    addps   xmm0, xmm1
-    addps   xmm0, xmm14         ; xmm0: pixel center
-    subps   xmm0, xmm15         ; xmm0: ray direction
-    v3norm  xmm0
-    andps   xmm0, dqword [abs_mask] ; xmm0: absolute value for color
-    mulps   xmm0, dqword [v4_255] ; xmm0 scaled by 255 for rgb space
-    mulps   xmm0, dqword [v4_viewport_w] ; causing an overflow makes for a
-                                         ; really cool pattern
+    addps   xmm11, xmm1
+    addps   xmm11, xmm14        ; xmm11: pixel center
+    subps   xmm11, xmm15        ; xmm11: ray direction
+    v3norm  xmm11               ; normalize ray direction
 
-    cvtps2dq xmm0, xmm0         ; convert to dword integers
-    packusdw xmm0, xmm0         ; pack into 16bit words
-    packuswb xmm0, xmm0         ; pack into bytes
-    movd     dword [pixels+rdi*4], xmm0 ; move to pixel location
-
+    ; Next, we determine whether the ray intersects with an
+    ; axis aligned box centered at the origin.
+    ;
     ; Branchless ray/bounding box intersection:
     ;   (https://tavianator.com/2022/ray_box_boundary.html)
+    ;
+    ; tmin/tmax will describe the distance along the ray
+    ; which intersects the box. We will shrink the distance
+    ; between these by clipping them with each plane of the
+    ; box.
+    ;
+    ; At the start, tmin=0 and tmax=infinity. If tmin > tmax
+    ; after clipping, the ray does not intersect.
+    movaps  xmm0, xmm11         ; calculate inverse of ray direction
+    movaps  xmm10, dqword [v4_one]
+    divps   xmm10, xmm0         ; xmm10 = 1.0 / dir. apparently, the divide by
+                                ; 0 (=infinity) still works here
+    xorps   xmm9, xmm9          ; xmm9: tmin = 0.0
+    movss   xmm8, [v4_inf]      ; xmm8: tmax = infinity
+    movaps  xmm7, dqword [v4_boxmin] ; xmm7: boxmin
+    movaps  xmm6, dqword [v4_boxmax] ; xmm6: boxmax
 
+macro clip_ray dim {
+    ; available registers: xmm0-xmm5
+    ; t1 = (bmin[d] - origin[d]) * dir_inv[d]
+    extractps esi, xmm7, dim
+    extractps ecx, xmm15, dim
+    extractps edx, xmm10, dim
+    movd    xmm0, esi       ; xmm0: bmin[d]
+    movd    xmm1, ecx       ; xmm1: origin[d]
+    movd    xmm2, edx       ; xmm2: dir inverse[d]
+    subss   xmm0, xmm1      ; xmm0: bmin[d] - origin[d]
+    mulss   xmm0, xmm2
+    movss   xmm3, xmm0      ; xmm3: t1
+
+    ; t2 = (bmin[d] - origin[d]) * dir_inv[d]
+    extractps esi, xmm6, dim
+    movd    xmm0, esi       ; xmm0: bmax[d]
+    subss   xmm0, xmm1      ; xmm0: bmin[d] - origin[d]
+    mulss   xmm0, xmm2      ; xmm0: t2
+
+    ; available registers: xmm1, xmm2, xmm4, xmm5
+    ; tmin = max(tmin, min(min(t1, t2), tmax))
+    movss   xmm5, xmm3      ; xmm5: t1
+    minss   xmm5, xmm0      ; xmm5: min(t1, t2)
+    movss   xmm1, xmm8      ; xmm1: tmax
+    minss   xmm1, xmm5      ; xmm1: min(min(t1, t2), tmax)
+    maxss   xmm9, xmm1      ; xmm9: updated tmin
+    ; tmax = min(tmax, max(max(t1, t2), tmin))
+    movss   xmm5, xmm3      ; xmm5: t1
+    maxss   xmm5, xmm0      ; xmm5: max(t1, t2)
+    movss   xmm1, xmm9      ; xmm1: tmin
+    maxss   xmm1, xmm5      ; xmm1: max(max(t1, t2), tmin)
+    minss   xmm8, xmm1      ; xmm8: updated tmax
+}
+    clip_ray 0
+    clip_ray 1
+    clip_ray 2
+
+    ; If we didn't intersect, get color from ray direction
+    andps   xmm11, dqword [abs_mask] ; xmm11: absolute value for color
+    mulps   xmm11, dqword [v4_255] ; xmm11 scaled by 255 for rgb space
+    ucomiss xmm9, xmm8
+    jb      intersect
+    jmp     pixel_loop_end
+intersect:
+    mulps   xmm11, dqword [v4_viewport_w] ; causing an overflow makes for a
+                                          ; really cool pattern
+pixel_loop_end:
+    cvtps2dq xmm11, xmm11       ; convert to dword integers
+    packusdw xmm11, xmm11       ; pack into 16bit words
+    packuswb xmm11, xmm11       ; pack into bytes
+    movd     dword [pixels+rdi*4], xmm11 ; move to pixel location
     inc     edi
     cmp     edi, pixels_len
     jl      pixel_loop_begin
@@ -453,7 +536,6 @@ nodbg:
     call    glfwPollEvents
     jmp     loop_begin
 
-
 error:                          ; TODO: Implement error messages
     jmp     exit
 
@@ -498,7 +580,6 @@ compile_shader:
     cmp     qword [rsp+0x18], 0
     jne     compile_shader_success
 
-    
     mov     rcx, msg            ; Log error if shader compilation failed
     mov     rdx, 0
     mov     rsi, msglen
@@ -556,8 +637,8 @@ section '.data' writeable align 16
 
 msglen     = 4096
 ; WARNING: v4_pixels__ below needs to match these
-pixels_w   = 1024
-pixels_h   = 1024
+pixels_w   = 256
+pixels_h   = 256
 pixels_len = pixels_w * pixels_h
 
 msg         rd msglen           ; general purpose string buffer
@@ -574,34 +655,30 @@ clear_b           dd 0.2
 clear_a           dd 1.0
 i_pixels_w        dd pixels_w
 cam_theta         dd 1.1
-cam_phi           dd 1.1
+cam_phi           dd -2.1
 cam_theta_per_sec dd 0.01
-cam_dist          dd 1.0
+cam_dist          dd 2.0
 ; Aligned and quadrupled for use in xmm registers
 align 16
+; useful numbers
+v4_inf        dd 0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000
+;v4_inf        dd 100000.0, 100000.0, 100000.0, 100000.0
 v4_half       dd 0.5, 0.5, 0.5, 0.5
-align 16
+v4_one        dd 1.0, 1.0, 1.0, 1.0
 v4_four       dd 4.0, 4.0, 4.0, 4.0
-align 16
 v4_255        dd 255.0, 255.0, 255.0, 255.0
-align 16
-v4_focal_len  dd 1.0
-align 16
-v4_upvector   dd 0.0, 1.0, 0.0, 0.0
-align 16
-v4_viewport_h dd -2.0, -2.0, -2.0, -2.0
-align 16
-v4_viewport_w dd 2.0, 2.0, 2.0, 2.0
-align 16
-v4_pixels_w   dd 1024.0, 1024.0, 1024.0, 1024.0
-align 16
-v4_pixels_h   dd 1024.0, 1024.0, 1024.0, 1024.0
-align 16
-v4_lookfrom   dd 0.0, 0.0, 0.0, 0.0
-align 16
-v4_lookat     dd 0.0, 0.0, 0.0, 0.0
-align 16
 abs_mask      dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF
+; constants
+v4_lookfrom   dd 0.0, 0.0, 0.0, 0.0
+v4_lookat     dd 0.0, 0.0, 0.0, 0.0
+v4_upvector   dd 0.0, 1.0, 0.0, 0.0
+v4_focal_len  dd 2.0, 2.0, 2.0, 2.0
+v4_viewport_h dd -2.5, -2.5, -2.5, -2.5
+v4_viewport_w dd 2.5, 2.5, 2.5, 2.5
+v4_pixels_w   dd 256.0, 256.0, 256.0, 256.0
+v4_pixels_h   dd 256.0, 256.0, 256.0, 256.0
+v4_boxmin     dd -0.5, -0.5, -0.5, -0.5
+v4_boxmax     dd 0.5, 0.5, 0.5, 0.5
 
 ; gl data
 glfw_window  rq 1
