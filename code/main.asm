@@ -642,7 +642,7 @@ pixels_h   = 256
 pixels_len = pixels_w * pixels_h
 
 msg         rd msglen           ; general purpose string buffer
-window_name db 'Cube Games', 0
+window_name db 'Empedocles Renderer', 0
 
 debug_msg   db 'cam %f, %f, %f', 10, 0
 
