@@ -417,6 +417,15 @@ pixel_loop_begin:
     ;
     ; At the start, tmin=0 and tmax=infinity. If tmin > tmax
     ; after clipping, the ray does not intersect.
+
+    ; TODO: We are going to try adapting the ray/box 
+    ; intersection algorithm in section 5 of the following
+    ; paper:
+    ;   (https://jcgt.org/published/0007/03/04/paper-lowres.pdf)
+    ; We won't need to reorient the ray or determine the
+    ; winding, as the box is axis aligned and we won't cull
+    ; any faces because it is transparent.
+    
     movaps  xmm0, xmm11         ; calculate inverse of ray direction
     movaps  xmm10, dqword [v4_one]
     divps   xmm10, xmm0         ; xmm10 = 1.0 / dir. apparently, the divide by
