@@ -416,7 +416,6 @@ pixel_loop_begin:
     movaps  xmm10, dqword [v4_one]
     divps   xmm10, xmm0         ; xmm10 = ray inverse direction. apparently, a
                                 ; divide by 0 (=infinity) still works here.
-
     ; vec3 n = r_inv * r_origin
     movaps  xmm9, xmm10         ; xmm9: ray inverse
     mulps   xmm9, xmm15         ; xmm9: n
@@ -449,30 +448,27 @@ pixel_loop_begin:
     movhlps xmm5, xmm6
     minps   xmm6, xmm5          ; xmm6: t_far
 
-
-    ; Alright, make sense of this shit.
-    ; normal = (t_near > 0.0) ? step(vec3(t_near), t1)) : step(t2, vec3(t_far)));
-    ; normal *= -sign(r_dir);
-    ; point = vec2(t_near, t_far);
-    ;;;
-
-    ; If we didn't intersect, get color from ray direction
-    andps   xmm11, dqword [abs_mask] ; xmm11: absolute value for color
-    mulps   xmm11, dqword [v4_255] ; xmm11 scaled by 255 for rgb space
-
-    ; if(t_near > t_far || t_far < 0.0)
-    ;     intersection = false;
+    ; if(t_near > t_far || t_far < 0.0) no_intersect
     ucomiss xmm7, xmm6
     jb      intersect
     ; The below correspondes to (t_far < 0.0)
     ;ucomiss xmm6, dword [v4_zero]
     ;jb      intersect
 
+    ; If we didn't intersect, get color from ray direction
     jmp     pixel_loop_end
 intersect:
-    mulps   xmm11, dqword [v4_two] ; causing an overflow makes for a
-                                   ; really cool pattern
+    ; Get normal of intersection
+    movss   xmm5, xmm7
+    shufps  xmm5, xmm5, 0       ; splat t_near to all 4 lanes
+    cmpps   xmm5, xmm9, 0
+    movmskps eax, xmm5
+    shl     eax, 4
+    movaps   xmm11, dqword [v4_normals+eax]
+
 pixel_loop_end:
+    andps   xmm11, dqword [abs_mask] ; xmm11: absolute value for color
+    mulps   xmm11, dqword [v4_255] ; xmm11 scaled by 255 for rgb space
     cvtps2dq xmm11, xmm11       ; convert to dword integers
     packusdw xmm11, xmm11       ; pack into 16bit words
     packuswb xmm11, xmm11       ; pack into bytes
@@ -637,8 +633,8 @@ section '.data' writeable align 16
 
 msglen     = 4096
 ; WARNING: v4_pixels__ below needs to match these
-pixels_w   = 2048
-pixels_h   = 2048
+pixels_w   = 1024
+pixels_h   = 1024
 pixels_len = pixels_w * pixels_h
 
 msg         rd msglen           ; general purpose string buffer
@@ -671,6 +667,13 @@ v4_two          dd 2.0, 2.0, 2.0, 2.0
 v4_four         dd 4.0, 4.0, 4.0, 4.0
 v4_255          dd 255.0, 255.0, 255.0, 255.0
 abs_mask        dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF
+v4_normals:
+    dd 0.0, 0.0, 0.0, 1.0 ; 000
+    dd 1.0, 0.0, 0.0, 1.0 ; 001
+    dd 0.0, 1.0, 0.0, 1.0 ; 010
+    dd 0.0, 0.0, 0.0, 1.0 ; 011
+    dd 0.0, 0.0, 1.0, 1.0 ; 100
+
 ; constants
 v4_lookfrom   dd 0.0, 0.0, 0.0, 0.0
 v4_lookat     dd 0.0, 0.0, 0.0, 0.0
@@ -678,8 +681,8 @@ v4_upvector   dd 0.0, 1.0, 0.0, 0.0
 v4_focal_len  dd 2.0, 2.0, 2.0, 2.0
 v4_viewport_h dd -2.5, -2.5, -2.5, -2.5
 v4_viewport_w dd 2.5, 2.5, 2.5, 2.5
-v4_pixels_w   dd 2048.0, 2048.0, 2048.0, 2048.0
-v4_pixels_h   dd 2048.0, 2048.0, 2048.0, 2048.0
+v4_pixels_w   dd 1024.0, 1024.0, 1024.0, 1024.0
+v4_pixels_h   dd 1024.0, 1024.0, 1024.0, 1024.0
 v4_boxmin     dd -0.5, -0.5, -0.5, -0.5
 v4_boxmax     dd 0.5, 0.5, 0.5, 0.5
 v4_negative_one dd -1.0, -1,0, -1.0, -1.0
