@@ -1,8 +1,37 @@
 ;= TODOS ===================================================
-; * Tracing against AABBs
 ; * Arbitary voxel grid roation (cam/viewport transform)
-; * Multithreading with sys_clone call
 ; * SIMD instructions
+;===========================================================
+
+;= VECTORIZATION IDEAS =====================================
+; The approach that seems most reasonable from the
+; literature(*) is wavefront tracing, which treats rays with
+; a breadth first approach, queuing further operations for
+; the next pass.
+;
+; This can get quite complicated in production path tracers,
+; but we can take advantage of the relative simplicity of
+; our materials to do better.
+;
+; When a ray is traced, we first traverse the BVH, and the
+; relevant information (bounding id, ray) is queued into an
+; array specific to BVH hits. If we hit a leaf, we figure
+; out whether the ray is reflected, absorbed, or refracted,
+; and the information is queued in one of the three
+; associated arrays.
+;
+; These can all be calculated as part of a SIMD situation
+; where the results allow us to derive the offsets to get to
+; the correct array.
+;
+; The path tracer keeps doing passes through the queues
+; until they are all empty.
+;
+; As a side note, we can change threads from processing the
+; entire scene to processing an offset of rows like we said
+; before.
+;
+; (*) https://www.tabellion.org/et/paper17/MoonRay.pdf
 ;===========================================================
 
 format ELF64
@@ -13,6 +42,16 @@ section '.text' executable
 
 include 'vec3.asm'
 include 'rand.asm'
+
+CLONE_VM      = 0x00000100
+CLONE_FS      = 0x00000200
+CLONE_FILES	  = 0x00000400
+CLONE_SIGHAN  = 0x00000800
+CLONE_PARENT  = 0x00008000
+CLONE_THREAD  = 0x00010000
+CLONE_IO      = 0x80000000
+CLONE_FLAGS = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAN or CLONE_PARENT or CLONE_THREAD or CLONE_IO
+
 
 ; When linking with gl3w, we ge an undefined reference to
 ; __dso_handle. This shit is a little too esoteric for my
@@ -375,6 +414,28 @@ loop_begin:
 ; rows perhaps, but some number of pixels processed before
 ; skipping. Could graph it!
 
+repeat thread_count-1
+    mov     rax, 56             ; sys_clone
+    ; flags CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | SIGCHLD
+    mov     rdi, CLONE_FLAGS
+    lea     rsi, [pixels]       ; child stack pointer
+    mov     rdx, 0              ; parent thread id
+    mov     r10, %              ; child thread id
+    mov     r8, 0               ; child thread local storage
+    syscall
+    mov     r15, rax            ; r15: parent or child result
+
+    xor     r13, r13
+    mov     r13, %
+    lea     r14, [pixels+pixel_buffer_size*%]
+    cmp     r15, 0
+    je      thread_start
+    jl      exit
+end repeat
+    mov     r13, 0
+    lea     r14, [pixels]
+
+thread_start:
     xor     edi, edi             ; edi: pixel counter
 pixel_loop_begin:
     xor     edx, edx
@@ -541,16 +602,53 @@ calculate_pixel_color:
     movaps  xmm8, xmm11
     v3norm  xmm8
     andps   xmm8, dqword [abs_mask] ; xmm8: absolute value for color
-    mulps   xmm8, xmm9         ; attenuate color from bounces
+    mulps   xmm8, xmm9          ; attenuate color from bounces
 
     mulps   xmm8, dqword [v4_255] ; xmm8 scaled by 255 for rgb space
-    cvtps2dq xmm8, xmm8       ; convert to dword integers
-    packusdw xmm8, xmm8       ; pack into 16bit words
-    packuswb xmm8, xmm8       ; pack into bytes
-    movd    dword [pixels+rdi*4], xmm8 ; move to pixel location
+    cvtps2dq xmm8, xmm8         ; convert to dword integers
+    packusdw xmm8, xmm8         ; pack into 16bit words
+    packuswb xmm8, xmm8         ; pack into bytes
+    movd    dword [r14+rdi*4], xmm8 ; move to pixel location
     inc     edi
     cmp     edi, pixels_len
     jl      pixel_loop_begin
+
+; DONE CALCULATING PIXELS
+
+    cmp     r15, 0              ; check if we are child or parent thread
+    jne     wait_join
+    mov     rax, 60             ; exit if child
+    xor     rdi, rdi
+    syscall 
+
+wait_join:
+repeat thread_count-1
+    mov     rax, 35             ; sys_wait4
+    mov     rdi, %              ; child pid
+    mov     rsi, 0              ; exit status addr
+    mov     rdx, 0              ; options
+    mov     r10, 0              ; rusage
+    syscall
+end repeat
+
+; Now we loop through pixels again, averaging the colors
+    mov     rdi, 0
+pixel_average_begin:
+    movzx   eax, [pixels+rdi]
+
+repeat thread_count-1
+    movzx   edx, [pixels+(pixel_buffer_size*%)+rdi]
+    add     eax, edx
+end repeat
+    ; Prepare for division (Sum is in EAX, Count is 4)
+    xor     edx, edx
+    mov     ebx, thread_count
+    div     ebx
+    mov     byte [pixels+rdi], al
+    
+    inc     rdi
+    cmp     rdi, pixels_len * 4
+    jl      pixel_average_begin
 
     ; Update GL data
     push    0
@@ -706,12 +804,14 @@ put_color:
 section '.data' writeable align 16
 ;===========================================================
 
-msglen     = 4096
+msglen       = 4096
 ; WARNING: v4_pixels__ below needs to match these
-pixels_w   = 256
-pixels_h   = 256
-pixels_len = pixels_w * pixels_h
-bounce_max = 10
+pixels_w     = 256
+pixels_h     = 256
+pixels_len   = pixels_w * pixels_h
+pixel_buffer_size = pixels_len * 4
+bounce_max   = 10
+thread_count = 12 ; add rand_seed and new threads
 
 msg         rd msglen           ; general purpose string buffer
 window_name db 'Empedocles Renderer', 0
@@ -720,8 +820,12 @@ debug_msg   db 'cam %f, %f, %f', 10, 0
 
 ; render data
 align 16
-pixels            rb pixels_len * 4
-rand_seed         dd 10231284
+pixels            rb pixel_buffer_size * (thread_count + 1)
+rand_seed:
+    dd 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, \
+    100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1300, 1400, 1500, 1600, 1700, 1800, \
+    111, 211, 311, 411, 511, 611, 711, 811, 911, 1110, 1211, 1311, 1411, 1511, 1611, 1711, 1811, \
+    221, 222, 322, 422, 522, 622, 722, 822, 922, 2210, 1222, 1322, 1422, 1522, 1622, 1722, 1822
 clear_r           dd 0.3
 clear_g           dd 0.1
 clear_b           dd 0.2
@@ -729,7 +833,7 @@ clear_a           dd 1.0
 i_pixels_w        dd pixels_w
 cam_theta         dd -1.1
 cam_phi           dd 2.1
-cam_theta_per_sec dd 0.01
+cam_theta_per_sec dd 0.02
 cam_dist          dd 2.0
 ; Aligned and quadrupled for use in xmm registers
 align 16
