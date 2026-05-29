@@ -5,11 +5,11 @@
 ;   ires = ((((unsigned int)*seed)>>9 ) | 0x3f800000);
 ;   return fres - 1.0f;
 macro frand_unsigned xmm_result {
-    mov     ebp, [rand_seed+r13]
+    mov     ebp, r14d
     mov     eax, 0x000343FD
     imul    ebp                 ; eax: seed * 0x000343FD
     add     eax, 0x00269EC3     ; eax: 0x000269EC3 + seed * 0x000343FD
-    mov     [rand_seed+r13], eax    ; store seed result
+    mov     r14d, eax    ; store seed result
     shr     eax, 9
     or      eax, 0x3F800000     ; eax: ((uint)seed)>>9 | 0x3F800000
     movd    xmm_result, eax
@@ -17,11 +17,11 @@ macro frand_unsigned xmm_result {
 }
 
 macro frand_signed xmm_result {
-    mov     ebp, [rand_seed+r13]
+    mov     ebp, r14d
     mov     eax, 0x000343FD
     imul    ebp                 ; eax: seed * 0x000343FD
     add     eax, 0x00269EC3     ; eax: 0x000269EC3 + seed * 0x000343FD
-    mov     [rand_seed+r13], eax    ; store seed result
+    mov     r14d, eax    ; store seed result
     shr     eax, 9
     or      eax, 0x40000000     ; eax: ((uint)seed)>>9 | 0x40000000
     movd    xmm_result, eax

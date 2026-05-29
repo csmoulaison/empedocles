@@ -58,14 +58,14 @@ __dso_handle:
 include 'vec3.asm'
 include 'rand.asm'
 
-CLONE_VM     = 0x00000100
-CLONE_FS     = 0x00000200
-CLONE_FILES	 = 0x00000400
-CLONE_SIGHAN = 0x00000800
-CLONE_PARENT = 0x00008000
-CLONE_THREAD = 0x00010000
-CLONE_IO     = 0x80000000
-CLONE_FLAGS = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAN or CLONE_PARENT or CLONE_THREAD or CLONE_IO
+CLONE_VM      = 0x00000100
+CLONE_FS      = 0x00000200
+CLONE_FILES	  = 0x00000400
+CLONE_SIGHAND = 0x00000800
+CLONE_PARENT  = 0x00008000
+CLONE_THREAD  = 0x00010000
+CLONE_IO      = 0x80000000
+CLONE_FLAGS = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAND or CLONE_PARENT or CLONE_THREAD or CLONE_IO
 
 ; Libc
 extrn printf
@@ -265,36 +265,50 @@ _start:
 ; After allocating all the threads at the start of the
 ; program, the host goes straight to preparing the first
 ; frame.
+;
+; Each thread has the following reserved registers:
+; TODO: replace and check these off:
+;   [ ] r10: current pixel index
+;   [ ] r11: end pixel index
+;   [ ] r12: sample index
+;   [ ] r13: bounce index
+;   [ ] r14: random seed
+;   [ ] r15: 0 if child thread
 ;===========================================================
-repeat thread_count-1
-    mov     rax, 56             ; sys_clone
-    mov     rdi, CLONE_FLAGS    ; flags
-    lea     rsi, [thread_mem+thread_mem_size*%] ; child stack pointer
-    mov     rdx, 0              ; parent thread id
-    mov     r10, %              ; child thread id
-    mov     r8, 0               ; child thread local storage
-    syscall
-    mov     r15, rax            ; r15: parent or child result
+if thread_count > 1
+    repeat thread_count-1
+        mov     rax, 56         ; sys_clone
+        mov     rdi, CLONE_FLAGS ; flags
+        lea     rsi, [pixels]   ; child stack pointer
+        mov     rdx, 0          ; parent thread id
+        mov     r10, %          ; child thread id
+        mov     r8, 0           ; child thread local storage
+        syscall
+        mov     r15, rax        ; r15: parent or child result
+        mov     r14, [rand_seeds+(%)*64] ; r13 is used to index into a random seed
+        cmp     r15, 0
+        je      thread_idle     ; if we are the child, we go straight to idle
+        jl      exit            ; error creating thread
+    end repeat
+else
+    mov     r15, 1              ; r15 needs to be set to not 0 or else we'll
+end if                          ; think we are a child thread.
 
-    xor     r13, r13
-    mov     r13, (%+1)*4            ; r13 is used to index into a random seed
-    cmp     r15, 0
-    je      thread_idle         ; if we are the child, we go straight to idle
-    jl      exit                ; error creating thread
-end repeat
-    mov     r13, 0
+    mov     r14, [rand_seeds]   ; if we are the host we need to set our seed
     jmp     start_frame
 
 thread_idle:
+    ; TODO: swapping eax and r10d here should enable us to
+    ; skip the mov from eax to r10d
     mov     eax, 1
     lock xadd [pixel_region_counter], eax ; eax is the next region index
     cmp     eax, pixel_regions_len
     jge     threads_complete
-    mov     edi, pixel_regions_stride
-    mul     edi                 ; edi: pixel_regions_stride * region index
-    mov     edi, eax            ; edi: pixel start index
-    mov     r14d, edi
-    add     r14d, pixel_regions_stride ; r14: pixel end index
+    mov     r10d, pixel_regions_stride
+    mul     r10d                 ; edi: pixel_regions_stride * region index
+    mov     r10d, eax            ; edi: pixel start index
+    mov     r11d, r10d
+    add     r11d, pixel_regions_stride ; r14: pixel end index
     jmp     render_region
     
 threads_complete:
@@ -309,14 +323,16 @@ threads_complete:
 render_region:
     movaps xmm12, dqword [v4_pixel_delta_u]
     movaps xmm13, dqword [v4_pixel_delta_v]
-    movaps xmm14, dqword [v4_viewport_root]
+    pxor   xmm14, xmm14         ; xmm14: color sum
     movaps xmm15, dqword [v4_look_from]
+pixel_start:
+    xor     r12d, r12d          ; zero sample index
 ; We've gathered the values listed above in xmm12-15 and
 ; now it's time to do the tight pixel loop.
-pixel_start:
+sample_start:
     xor     edx, edx
-    mov     eax, edi
-    div     dword [i_pixels_w]
+    mov     eax, r10d
+    div     dword [i_pixels_length]
     mov     esi, edx            ; esi: x = (i % w)
     mov     ecx, eax            ; ecx: y = (i / w)
 
@@ -335,16 +351,15 @@ pixel_start:
 
     shufps  xmm11, xmm11, 0     ; xmm11: x
     shufps  xmm1, xmm1, 0       ; xmm1: y
-    mulps   xmm11, xmm12        ; xmm11: y * pixel_delta_u
+    mulps   xmm11, xmm12 ; xmm11: y * pixel_delta_u
     mulps   xmm1, xmm13         ; xmm1: x * pixel_delta_v
     addps   xmm11, xmm1
-    addps   xmm11, xmm14        ; xmm11: pixel center
+    addps   xmm11, dqword [v4_viewport_root] ; xmm11: pixel center
     subps   xmm11, xmm15        ; xmm11: ray direction
     ;v3norm  xmm11              ; normalize ray direction
 
     movaps  xmm10, xmm15        ; xmm10: ray origin from camera position
     movaps  xmm9, dqword [v4_one] ; xmm9: color attenuation starts at v4(1.0)
-    mov     r8, 0
 
 ;= TRACE RAY ===============================================
 ; We return here on every bounce, with the following
@@ -354,10 +369,8 @@ pixel_start:
 ;   xmm9:  current color attenuation
 ;   r8:    bounce iteration
 ;===========================================================
+    xor     r13d, r13d          ; zero bounce index
 trace_ray:
-    cmp     r8, 50
-    je      exit
-    
     ; We determine whether the ray intersects with an
     ; axis aligned box centered at the origin.
     ;
@@ -397,7 +410,7 @@ trace_ray:
     maxps   xmm5, xmm4          ; xmm5: t_near
 
     ucomiss xmm5, [v4_eps]
-    jb      calculate_pixel_color
+    jb      calculate_sample_color
 
     movaps  xmm4, xmm6
     movshdup xmm3, xmm6
@@ -407,15 +420,15 @@ trace_ray:
 
     ; if(t_near < t_far) intersect
     ucomiss xmm4, xmm5
-    jb      calculate_pixel_color
+    jb      calculate_sample_color
 
     ; Attenuate color
     mulps   xmm9, dqword [v4_albedo]
 
     ; Bounce/trace another ray unless we are at max depth
-    inc     r8
-    cmp     r8, bounce_max
-    jg      calculate_pixel_color
+    inc     r13d
+    cmp     r13d, bounce_max
+    jg      calculate_sample_color
 
     ; Get normal of intersection
     movaps  xmm8, xmm7          ; xmm8: t1
@@ -457,20 +470,26 @@ trace_ray:
     ;movaps  xmm11, xmm8         ; new ray direction is the normal for now
     jmp     trace_ray
 
-calculate_pixel_color:
+calculate_sample_color:
     movaps  xmm8, xmm11
     v3norm  xmm8
     andps   xmm8, dqword [abs_mask] ; xmm8: absolute value for color
     mulps   xmm8, xmm9          ; attenuate color from bounces
+    addps   xmm14, xmm8         ; add to color sum
+    inc     r12d
+    cmp     r12d, sample_count
+    jl      sample_start
 
-    mulps   xmm8, dqword [v4_255] ; xmm8 scaled by 255 for rgb space
-    cvtps2dq xmm8, xmm8         ; convert to dword integers
-    packusdw xmm8, xmm8         ; pack into 16bit words
-    packuswb xmm8, xmm8         ; pack into bytes
+write_to_pixel:
+    divps   xmm14, dqword [v4_sample_count] ; average samples
+    mulps   xmm14, dqword [v4_255] ; xmm14 scaled by 255 for rgb space
+    cvtps2dq xmm14, xmm14         ; convert to dword integers
+    packusdw xmm14, xmm14         ; pack into 16bit words
+    packuswb xmm14, xmm14         ; pack into bytes
 
-    movd    dword [pixels+edi*4], xmm8 ; move to pixel location
-    inc     edi
-    cmp     edi, r14d
+    movd    dword [pixels+r10d*4], xmm14 ; move to pixel location
+    inc     r10d
+    cmp     r10d, r11d
     jl      pixel_start
 
     ; If we have calculated the entire render pass, we
@@ -487,8 +506,8 @@ end_frame:
     push    0x1401              ; GL_UNSIGNED_BYTE
     push    0x1908              ; GL_RGBA
     mov     r9d, 0
-    mov     r8d, pixels_h
-    mov     ecx, pixels_w
+    mov     r8d, pixels_length
+    mov     ecx, pixels_length
     mov     edx, 0x1908         ; GL_RGBA
     mov     esi, 0
     mov     edi, 0x0DE1         ; GL_TEXTURE_2D
@@ -589,11 +608,11 @@ start_frame:
     movss   [v4_look_from+0x04], xmm10
     movss   [v4_look_from+0x08], xmm11
 
-    mov     rax, 3
-    cvtss2sd xmm2, xmm9
-    cvtss2sd xmm1, xmm10
-    cvtss2sd xmm0, xmm11
-    mov     rdi, debug_msg
+    ;mov     rax, 3
+    ;cvtss2sd xmm2, xmm9
+    ;cvtss2sd xmm1, xmm10
+    ;cvtss2sd xmm0, xmm11
+    ;mov     rdi, debug_msg
     ;call    printf
 
 ;= RENDER PROCEDURE ========================================
@@ -771,21 +790,36 @@ compile_shader_success:
     ret
 
 ;===========================================================
-section '.data' writeable align 16
+section '.data' writeable align 64
 ;===========================================================
 
+; Symbols
+pixels_length        = 256
+fpixels_length equ 256.0
+pixels_count         = pixels_length * pixels_length
+pixel_buffer_size    = pixels_count * 4
+pixel_regions_stride = 1024
+pixel_regions_len    = pixels_count / pixel_regions_stride
+thread_count         = 12
+sample_count         = 8
+fsample_count equ 8.0
+
+align 64
+pixels rb pixel_buffer_size
+
+rand_seeds:
+repeat thread_count
+    align 64
+    dq % * 1000
+end repeat
+
+align 64
+pixel_region_counter dd 0
+
+align 64
 msglen       = 4096
 ; WARNING: v4_pixels__ below needs to match these
-pixels_w     = 1024
-pixels_h     = 1024
-pixels_len   = pixels_w * pixels_h
-pixel_buffer_size = pixels_len * 4
-pixel_regions_stride = pixels_w / 4
-pixel_regions_len = pixels_len / pixel_regions_stride
 bounce_max   = 10
-
-thread_count = 12 ; add rand_seed and new threads
-thread_mem_size = 128
 
 msg         rd msglen           ; general purpose string buffer
 window_name db 'Empedocles Renderer', 0
@@ -856,32 +890,19 @@ align 16
 ; operations.
 ;
 ;===========================================================
-align 16
-thread_mem rb thread_mem_size * thread_count
-
 ; render data
-align 16
-pixel_region_counter dd 0
-align 16
-pixels            rb pixel_buffer_size
-rand_seed:
-    dq 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, \
-    100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1300, 1400, 1500, 1600, 1700, 1800, \
-    111, 211, 311, 411, 511, 611, 711, 811, 911, 1110, 1211, 1311, 1411, 1511, 1611, 1711, 1811, \
-    221, 222, 322, 422, 522, 622, 722, 822, 922, 2210, 1222, 1322, 1422, 1522, 1622, 1722, 1822
 align 16
 clear_r           dd 0.3
 clear_g           dd 0.1
 clear_b           dd 0.2
 clear_a           dd 1.0
-i_pixels_w        dd pixels_w
+i_pixels_length   dd pixels_length
 cam_theta         dd -1.1
 cam_phi           dd 2.1
 cam_theta_per_sec dd 0.02
 cam_dist          dd 2.0
-; Aligned and quadrupled for use in xmm registers
-align 16
 
+align 64
 ; pulled from registers at start. refactor
 v4_pixel_delta_u dd 0.0, 0.0, 0.0, 0.0
 v4_pixel_delta_v dd 0.0, 0.0, 0.0, 0.0
@@ -889,6 +910,7 @@ v4_viewport_root dd 0.0, 0.0, 0.0, 0.0
 v4_look_from     dd 0.0, 0.0, 0.0, 0.0
 
 ; useful numbers
+align 64
 v4_inf          dd 0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000
 v4_negative_inf dd 0xFF800000, 0xFF800000, 0xFF800000, 0xFF800000
 v4_sign_mask    dd 0x80000000, 0x80000000, 0x80000000, 0x80000000
@@ -901,25 +923,20 @@ v4_three        dd 3.0, 3.0, 3.0, 3.0
 v4_four         dd 4.0, 4.0, 4.0, 4.0
 v4_255          dd 255.0, 255.0, 255.0, 255.0
 abs_mask        dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF
-v4_normals:
-    dd 0.0, 0.0, 0.0, 0.0 ; 000
-    dd 0.0, 0.0, 1.0, 0.0 ; 001
-    dd 0.0, 1.0, 0.0, 0.0 ; 010
-    dd 0.0, 0.0, 0.0, 0.0 ; 011
-    dd 1.0, 0.0, 0.0, 0.0 ; 100
 v4i_zero        dd 0, 0, 0, 0
 
 ; constants
-v4_lookat     dd 0.0, 0.0, 0.0, 0.0
-v4_upvector   dd 0.0, 1.0, 0.0, 0.0
-v4_focal_len  dd 2.0, 2.0, 2.0, 2.0
-v4_viewport_h dd -2.5, -2.5, -2.5, -2.5
-v4_viewport_w dd 2.5, 2.5, 2.5, 2.5
-v4_pixels_w   dd 1024.0, 1024.0, 1024.0, 1024.0
-v4_pixels_h   dd 1024.0, 1024.0, 1024.0, 1024.0
-v4_boxmin     dd -0.5, -0.5, -0.5, -0.5
-v4_boxmax     dd 0.5, 0.5, 0.5, 0.43
-v4_albedo     dd 0.66, 0.66, 0.66, 1.0
+v4_lookat       dd 0.0, 0.0, 0.0, 0.0
+v4_sample_count dd fsample_count,fsample_count,fsample_count,fsample_count
+v4_upvector     dd 0.0, 1.0, 0.0, 0.0
+v4_focal_len    dd 2.0, 2.0, 2.0, 2.0
+v4_viewport_h   dd -2.5, -2.5, -2.5, -2.5
+v4_viewport_w   dd 2.5, 2.5, 2.5, 2.5
+v4_pixels_w     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
+v4_pixels_h     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
+v4_boxmin       dd -0.5, -0.5, -0.5, -0.5
+v4_boxmax       dd 0.5, 0.5, 0.5, 0.43
+v4_albedo       dd 0.66, 0.66, 0.66, 1.0
 v4_negative_one dd -1.0, -1,0, -1.0, -1.0
 
 ; gl data
