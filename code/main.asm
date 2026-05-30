@@ -4,6 +4,7 @@
 ; * Refraction - with chance of reflection
 ; * AVX-512 path - with wavefront approach
 ;===========================================================
+;note
 
 ;= VECTORIZATION IDEAS =====================================
 ; The approach that seems most reasonable from the
@@ -412,14 +413,16 @@ trace_ray:
     movhlps xmm4, xmm5
     maxps   xmm5, xmm4          ; xmm5: t_near
 
-    ucomiss xmm5, [v4_eps]
-    jb      calculate_sample_color
-
     movaps  xmm4, xmm6
     movshdup xmm3, xmm6
     minps   xmm4, xmm3
     movhlps xmm3, xmm4
     minps   xmm4, xmm3          ; xmm4: t_far
+
+    ; if (t_far < 0.0) no intersect
+    ;ucomiss xmm4, [v4_zero]
+    ;jb      calculate_sample_color
+
 
     ; if(t_near < t_far) intersect
     ucomiss xmm4, xmm5
@@ -439,21 +442,42 @@ trace_ray:
     movaps  xmm3, xmm5          ; xmm3: splatted t_near
     cmpps   xmm8, xmm3, 5
     andps   xmm8, dqword [v4_one]
-    ;cmpps   xmm3, xmm7, 0
-    ;movmskps eax, xmm3          ; eax now contains bitmask ### = zyx
-    ;shl     eax, 4              ; multiply by 16 to index lookup table
-    ;movaps  xmm2, dqword [v4_normals+eax] ; xmm2: normal from lookup table
     
     ; Multiply by -sign of ray direction
     movaps  xmm0, xmm11
     andps   xmm0, dqword [v4_sign_mask]
     xorps   xmm0, dqword [v4_sign_mask]
-    xorps   xmm8, xmm0
+    xorps   xmm8, xmm0          ; xmm8: normal
+    v3norm xmm8
 
+; usable xmm registers: xmm1, xmm2, xmm3, xmm4, xmm6, xmm7
+; material
+;   0: diffuse
+;   1: metallic
+material equ 1
+if material eq 0
     ; Calculate diffuse reflection
+    frand_normal xmm11
+    frand_normal xmm6
+    shufps  xmm6, xmm6, 0
+    frand_normal xmm4
+    shufps  xmm4, xmm4, 0
+    blendps xmm11, xmm6, 0010b
+    blendps xmm11, xmm4, 0100b
+    v3norm  xmm11
+    addps   xmm11, xmm8          ; xmm11 is the new direction
+else if material eq 1
+    ; Calculate metallic reflection
+    ; reflected vector = v - 2.0 * dot(v,n) * n
+    movaps  xmm7, xmm8          ; xmm7: normal
+    dpps    xmm7, xmm11, 11111111b ; xmm7: dot(v,n)
+    mulps   xmm7, xmm8          ; xmm7: dot(v,n) * n
+    mulps   xmm7, dqword [v4_two] ; xmm7: 2.0 * dot(v,n) * n
+    subps   xmm11, xmm7         ; xmm11: reflected vector
+    ; if we don't normalize, fuzz factor will vary by ray length.
+    ; TODO: test it once we get there.
+    v3norm  xmm11
 
-    ; usable xmm registers: xmm1, xmm2, xmm3, xmm4, xmm6, xmm7
-    ;pxor    xmm7, xmm7
     frand_normal xmm7
     frand_normal xmm6
     shufps  xmm6, xmm6, 0
@@ -462,22 +486,23 @@ trace_ray:
     blendps xmm7, xmm6, 0010b
     blendps xmm7, xmm4, 0100b
     v3norm  xmm7
-    addps   xmm7, xmm8          ; xmm7 is the new direction
-    ;v3norm  xmm7
+    mulps   xmm7, dqword [v4_fuzz_factor]
+    addps   xmm11, xmm7          ; xmm11 is the new direction
+end if
 
-    ; Calculate hit position
+    ; Calculate hit position, which is origin of our next ray
     ; r_origin + r_dir * t_near;
     mulps   xmm5, xmm11         ; xmm5: r_dir * t_near
     addps   xmm10, xmm5         ; xmm10: hit position, new ray origin
-    movaps  xmm11, xmm7         ; new ray direction the lambertian reflection
-    ;movaps  xmm11, xmm8         ; new ray direction is the normal for now
     jmp     trace_ray
 
 calculate_sample_color:
     movaps  xmm8, xmm11
     v3norm  xmm8
-    andps   xmm8, dqword [abs_mask] ; xmm8: absolute value for color
+    ;andps   xmm8, dqword [abs_mask] ; xmm8: absolute value for color
     mulps   xmm8, xmm9          ; attenuate color from bounces
+    mulps   xmm8, dqword [v4_two]
+    maxps   xmm8, dqword [v4_zero]
     addps   xmm14, xmm8         ; add to color sum
     inc     r12d
     cmp     r12d, sample_count
@@ -809,9 +834,9 @@ pixels_count         = pixels_length * pixels_length
 pixel_buffer_size    = pixels_count * 4
 pixel_regions_stride = pixels_length
 pixel_regions_len    = pixels_count / pixel_regions_stride
-thread_count         = 12
-sample_count         = 100
-fsample_count equ 100.0
+thread_count         = 7
+sample_count         = 64
+fsample_count equ 64.0
 
 align 64
 pixels rb pixel_buffer_size
@@ -911,7 +936,7 @@ clear_b           dd 0.2
 clear_a           dd 1.0
 cam_theta         dd -1.1
 cam_phi           dd 2.1
-cam_theta_per_sec dd 0.03
+cam_theta_per_sec dd 0.01
 cam_dist          dd 2.0
 i_pixels_length   dd pixels_length
 
@@ -931,11 +956,12 @@ v4_boxmax       dd 0.5, 0.5, 0.5, 0.43
 v4_inf          dd 0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000
 v4_negative_inf dd 0xFF800000, 0xFF800000, 0xFF800000, 0xFF800000
 v4_eps          dd 0.02, 0.02, 0.02, 0.02
+v4_fuzz_factor  dd 0.1, 0.1, 0.1, 0.1
 v4_albedo       dd 0.66, 0.66, 0.66, 1.0
+v4_two          dd 2.0, 2.0, 2.0, 2.0
 v4_255          dd 255.0, 255.0, 255.0, 255.0
 v4_zero         dd 0.0, 0.0, 0.0, 0.0
 v4_half         dd 0.5, 0.5, 0.5, 0.5
-v4_two          dd 2.0, 2.0, 2.0, 2.0
 v4_three        dd 3.0, 3.0, 3.0, 3.0
 v4_four         dd 4.0, 4.0, 4.0, 4.0
 v4i_zero        dd 0, 0, 0, 0
