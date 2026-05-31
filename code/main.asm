@@ -4,7 +4,6 @@
 ; * Refraction - with chance of reflection
 ; * AVX-512 path - with wavefront approach
 ;===========================================================
-;note
 
 ;= VECTORIZATION IDEAS =====================================
 ; The approach that seems most reasonable from the
@@ -268,13 +267,13 @@ _start:
 ; frame.
 ;
 ; Each thread has the following reserved registers:
-; TODO: replace and check these off:
-;   [ ] r10: current pixel index
-;   [ ] r11: end pixel index
-;   [ ] r12: sample index
-;   [ ] r13: bounce index
-;   [ ] r14: random seed
-;   [ ] r15: 0 if child thread
+;   r9:  current object trace index
+;   r10: current pixel index
+;   r11: end pixel index
+;   r12: sample index
+;   r13: bounce index
+;   r14: random seed
+;   r15: 0 if child thread
 ;===========================================================
 if thread_count > 1
     repeat thread_count-1
@@ -325,10 +324,7 @@ all_threads_started:
 ; Renders a contiguous region of the pixel buffer.
 ;===========================================================
 render_region:
-    movaps xmm12, dqword [v4_pixel_delta_u]
-    movaps xmm13, dqword [v4_pixel_delta_v]
-    pxor   xmm14, xmm14         ; xmm14: color sum
-    movaps xmm15, dqword [v4_look_from]
+    pxor    xmm15, xmm15         ; xmm15: color sum
 pixel_start:
     xor     r12d, r12d          ; zero sample index
 ; We've gathered the values listed above in xmm12-15 and
@@ -355,32 +351,45 @@ sample_start:
 
     shufps  xmm11, xmm11, 0     ; xmm11: x
     shufps  xmm1, xmm1, 0       ; xmm1: y
-    mulps   xmm11, xmm12 ; xmm11: y * pixel_delta_u
-    mulps   xmm1, xmm13         ; xmm1: x * pixel_delta_v
+    mulps   xmm11, dqword [v4_pixel_delta_u] ; xmm11: y * pixel_delta_u
+    mulps   xmm1, dqword [v4_pixel_delta_v] ; xmm1: x * pixel_delta_v
     addps   xmm11, xmm1
     addps   xmm11, dqword [v4_viewport_root] ; xmm11: pixel center
-    subps   xmm11, xmm15        ; xmm11: ray direction
+    subps   xmm11, dqword [v4_look_from]        ; xmm11: ray direction
     ;v3norm  xmm11              ; normalize ray direction
+    movaps  xmm10, dqword [v4_look_from] ; xmm10: ray origin from camera position
 
-    movaps  xmm10, xmm15        ; xmm10: ray origin from camera position
     movaps  xmm9, dqword [v4_one] ; xmm9: color attenuation starts at v4(1.0)
 
 ;= TRACE RAY ===============================================
 ; We return here on every bounce, with the following
 ; registers remaining stable and updated on every bounce.
+;   xmm14: closest t1
+;   xmm13: current_ray_origin
+;   xmm12: closest intersection t
 ;   xmm11: current ray direction
-;   xmm10: current ray origin
+;   xmm10: closest ray origin
 ;   xmm9:  current color attenuation
 ;   r8:    bounce iteration
 ;===========================================================
     xor     r13d, r13d          ; zero bounce index
 trace_ray:
+    movaps  xmm12, dqword [v4_inf]
+    movaps  xmm13, xmm10
+    subps   xmm13, dqword [box_init]
+    xor     r9, r9            ; zero object trace index TODO: calc offset from this
+test_intersection:
+    lea     rsi, [box_offsets]
+    mov     rax, r9
+    mov     rdi, 16
+    mul     rdi
+    add     rsi, rax
+    addps   xmm13, dqword [rsi]
+
     ; We determine whether the ray intersects with an
     ; axis aligned box centered at the origin.
-    ;
     ; Inigo with the clutch:
     ;   (https://iquilezles.org/articles/intersectors/)
-    ; Box size centered at origin, transform origin and dir accordingly
 
     ; vec3 r_inv = 1.0 / r_dir
     movaps  xmm0, xmm11         ; calculate inverse of ray direction
@@ -389,7 +398,7 @@ trace_ray:
                                 ; divide by 0 (=infinity) still works here.
     ; vec3 n = r_inv * r_origin
     movaps  xmm7, xmm8          ; xmm7: ray inverse
-    mulps   xmm7, xmm10         ; xmm7: n
+    mulps   xmm7, xmm13         ; xmm7: n
     xorps   xmm7, dqword [v4_sign_mask] ; xmm7: -n
 
     ; vec3 k = abs(r_inv) * box_size
@@ -413,42 +422,63 @@ trace_ray:
     movhlps xmm4, xmm5
     maxps   xmm5, xmm4          ; xmm5: t_near
 
+    ucomiss xmm5, [v4_eps]
+    jl      end_intersection
+
+    ; if(t_near < t_closest) update t closest
+    ucomiss xmm5, xmm12
+    jae     end_intersection   ; you make a movie... called flippa
+
     movaps  xmm4, xmm6
     movshdup xmm3, xmm6
-    minps   xmm4, xmm3
+    minps   xmm4, xmm3          ; the wahel?
     movhlps xmm3, xmm4
     minps   xmm4, xmm3          ; xmm4: t_far
 
     ; if (t_far < 0.0) no intersect
-    ;ucomiss xmm4, [v4_zero]
-    ;jb      calculate_sample_color
+    ucomiss xmm4, [v4_zero]
+    jbe      end_intersection
 
-
-    ; if(t_near < t_far) intersect
+    ; if(t_far < t_near) no intersect
     ucomiss xmm4, xmm5
-    jb      calculate_sample_color
+    jbe     end_intersection
+
+    movss   xmm12, xmm5         ; track the closest t_near
+    movaps  xmm10, xmm13        ; track ray origin of closest t
+    movaps  xmm14, xmm7         ; track t1 of closest t
+end_intersection:
+    inc     r9d
+    cmp     r9d, cube_iterations
+    jl      test_intersection   ; is dead
+
+    ucomiss xmm12, [v4_inf]
+    je      calculate_sample_color
 
     ; Attenuate color
     mulps   xmm9, dqword [v4_albedo]
 
-    ; Bounce/trace another ray unless we are at max depth
+    ; Stop bouncing rays if we are at max depth
     inc     r13d
     cmp     r13d, bounce_max
     jg      calculate_sample_color
 
     ; Get normal of intersection
-    movaps  xmm8, xmm7          ; xmm8: t1
-    shufps  xmm5, xmm5, 0       ; splat t_near to all lanes
-    movaps  xmm3, xmm5          ; xmm3: splatted t_near
-    cmpps   xmm8, xmm3, 5
+    movaps  xmm8, xmm14          ; xmm8: t1
+    shufps  xmm12, xmm12, 0
+    cmpps   xmm8, xmm12, 5
     andps   xmm8, dqword [v4_one]
     
     ; Multiply by -sign of ray direction
     movaps  xmm0, xmm11
-    andps   xmm0, dqword [v4_sign_mask]
+    andps   xmm0, dqword [v4_sign_mask] ; died in a car accident
     xorps   xmm0, dqword [v4_sign_mask]
     xorps   xmm8, xmm0          ; xmm8: normal
     v3norm xmm8
+
+    ; Calculate hit position, which is origin of our next ray
+    ; r_origin + r_dir * closest_t;
+    mulps   xmm12, xmm11         ; xmm12: r_dir * closest_t
+    addps   xmm10, xmm12         ; xmm10: hit position, new ray origin
 
 ; usable xmm registers: xmm1, xmm2, xmm3, xmm4, xmm6, xmm7
 ; material
@@ -487,35 +517,32 @@ else if material eq 1
     blendps xmm7, xmm4, 0100b
     v3norm  xmm7
     mulps   xmm7, dqword [v4_fuzz_factor]
-    addps   xmm11, xmm7          ; xmm11 is the new direction
+    ;addps   xmm11, xmm7          ; xmm11 is the new direction
 end if
 
-    ; Calculate hit position, which is origin of our next ray
-    ; r_origin + r_dir * t_near;
-    mulps   xmm5, xmm11         ; xmm5: r_dir * t_near
-    addps   xmm10, xmm5         ; xmm10: hit position, new ray origin
     jmp     trace_ray
 
 calculate_sample_color:
-    movaps  xmm8, xmm11
+    movaps  xmm8, dqword [v4_bg]
+    ;movaps  xmm8, xmm11         ; bg color from ray direction
     v3norm  xmm8
     ;andps   xmm8, dqword [abs_mask] ; xmm8: absolute value for color
     mulps   xmm8, xmm9          ; attenuate color from bounces
-    mulps   xmm8, dqword [v4_two]
+    ;mulps   xmm8, dqword [v4_two]
     maxps   xmm8, dqword [v4_zero]
-    addps   xmm14, xmm8         ; add to color sum
+    addps   xmm15, xmm8         ; add to color sum
     inc     r12d
     cmp     r12d, sample_count
     jl      sample_start
 
 write_to_pixel:
-    divps   xmm14, dqword [v4_sample_count] ; average samples
-    mulps   xmm14, dqword [v4_255] ; xmm14 scaled by 255 for rgb space
-    cvtps2dq xmm14, xmm14         ; convert to dword integers
-    packusdw xmm14, xmm14         ; pack into 16bit words
-    packuswb xmm14, xmm14         ; pack into bytes
+    divps   xmm15, dqword [v4_sample_count] ; average samples
+    mulps   xmm15, dqword [v4_255] ; xmm15 scaled by 255 for rgb space
+    cvtps2dq xmm15, xmm15         ; convert to dword integers
+    packusdw xmm15, xmm15         ; pack into 16bit words
+    packuswb xmm15, xmm15         ; pack into bytes
 
-    movd    dword [pixels+r10d*4], xmm14 ; move to pixel location
+    movd    dword [pixels+r10d*4], xmm15 ; move to pixel location
     inc     r10d
     cmp     r10d, r11d
     jl      pixel_start
@@ -610,6 +637,9 @@ start_frame:
     movss   xmm0, [cam_theta]   ; xmm0, cam_theta
     addss   xmm0, [cam_theta_per_sec]
     movss   [cam_theta], xmm0   ; cam_theta += cam_theta_per_second
+    movss   xmm0, [cam_phi]   ; xmm0, cam_theta
+    addss   xmm0, [cam_phi_per_sec]
+    movss   [cam_phi], xmm0   ; cam_theta += cam_theta_per_second
 
     movss   xmm0, [cam_theta]
     call    cosf
@@ -694,7 +724,7 @@ start_frame:
     ; Calculate camera basis vectors:
     ;   xmm8  <- u = norm(cross(up, w))
     ;   xmm9  <- v = cross(w, u)
-    ;   xmm10 <- = norm(from - at)
+    ;   xmm10 <- w = norm(from - at)
     ; xmm10 must remain stable until the viewport origin has
     ; been calculated.
     movaps  xmm10, xmm15        ; xmm10: lookfrom
@@ -835,8 +865,10 @@ pixel_buffer_size    = pixels_count * 4
 pixel_regions_stride = pixels_length
 pixel_regions_len    = pixels_count / pixel_regions_stride
 thread_count         = 7
-sample_count         = 64
-fsample_count equ 64.0
+sample_count         = 4
+fsample_count equ 4.0
+bounce_max           = 16
+cube_iterations      = 27
 
 align 64
 pixels rb pixel_buffer_size
@@ -857,9 +889,10 @@ pixel_regions_complete dd 0
 align 64
 msglen       = 4096
 ; WARNING: v4_pixels__ below needs to match these
-bounce_max   = 10
 
-msg         rd msglen           ; general purpose string buffer
+align 64
+msg         db "Reached the point\n" ; general purpose string buffer
+align 64
 window_name db 'Empedocles Renderer', 0
 
 debug_msg   db 'cam %f, %f, %f', 10, 0
@@ -937,7 +970,8 @@ clear_a           dd 1.0
 cam_theta         dd -1.1
 cam_phi           dd 2.1
 cam_theta_per_sec dd 0.01
-cam_dist          dd 2.0
+cam_phi_per_sec dd 0.00
+cam_dist          dd 5.0
 i_pixels_length   dd pixels_length
 
 align 64
@@ -947,16 +981,50 @@ v4_pixel_delta_v dd 0.0, 0.0, 0.0, 0.0
 v4_look_from     dd 0.0, 0.0, 0.0, 0.0
 v4_viewport_root dd 0.0, 0.0, 0.0, 0.0
 
+box_init dd 1.5, 1.5, 1.5, 0.0
+box_offsets:
+    dd 0.0, 0.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 1.5, -3.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 1.5, -3.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+
+    dd -3.0, -3.0, 1.5, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 1.5, -3.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 1.5, -3.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+
+    dd -3.0, -3.0, 1.5, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 1.5, -3.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 1.5, -3.0, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+    dd 0.0, 1.5, 0.0, 0.0
+
 ; useful numbers
 align 64
 v4_one          dd 1.0, 1.0, 1.0, 1.0
 v4_sign_mask    dd 0x80000000, 0x80000000, 0x80000000, 0x80000000
 abs_mask        dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF
-v4_boxmax       dd 0.5, 0.5, 0.5, 0.43
+v4_boxmax       dd 0.5, 0.5, 0.5, 0.0
+v4_boxoff       dd 0.0, 1.25, 0.0, 0.0
 v4_inf          dd 0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000
 v4_negative_inf dd 0xFF800000, 0xFF800000, 0xFF800000, 0xFF800000
-v4_eps          dd 0.02, 0.02, 0.02, 0.02
-v4_fuzz_factor  dd 0.1, 0.1, 0.1, 0.1
+v4_eps          dd 0.1, 0.1, 0.1, 0.1
+v4_near_one     dd 0.98, 0.98, 0.98, 0.9
+v4_fuzz_factor  dd 0.04, 0.04, 0.04, 0.04
 v4_albedo       dd 0.66, 0.66, 0.66, 1.0
 v4_two          dd 2.0, 2.0, 2.0, 2.0
 v4_255          dd 255.0, 255.0, 255.0, 255.0
@@ -965,14 +1033,15 @@ v4_half         dd 0.5, 0.5, 0.5, 0.5
 v4_three        dd 3.0, 3.0, 3.0, 3.0
 v4_four         dd 4.0, 4.0, 4.0, 4.0
 v4i_zero        dd 0, 0, 0, 0
+v4_bg           dd 1.0, 0.5, 0.75, 0.0
 
 ; constants
 v4_lookat       dd 0.0, 0.0, 0.0, 0.0
 v4_sample_count dd fsample_count,fsample_count,fsample_count,fsample_count
 v4_upvector     dd 0.0, 1.0, 0.0, 0.0
-v4_focal_len    dd 2.0, 2.0, 2.0, 2.0
-v4_viewport_h   dd -2.5, -2.5, -2.5, -2.5
-v4_viewport_w   dd 2.5, 2.5, 2.5, 2.5
+v4_focal_len    dd 1.0, 1.0, 1.0, 1.0
+v4_viewport_h   dd -15.0, -15.0, -15.0, -15.0
+v4_viewport_w   dd 15.0, 15.0, 15.0, 15.0
 v4_pixels_w     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
 v4_pixels_h     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
 v4_boxmin       dd -0.5, -0.5, -0.5, -0.5
