@@ -365,18 +365,17 @@ sample_start:
 ; We return here on every bounce, with the following
 ; registers remaining stable and updated on every bounce.
 ;   xmm14: closest t1
-;   xmm13: current_ray_origin
+;   xmm13: current box offset
 ;   xmm12: closest intersection t
 ;   xmm11: current ray direction
-;   xmm10: closest ray origin
+;   xmm10: ray origin
 ;   xmm9:  current color attenuation
+;   xmm8:  closest box offset
 ;   r8:    bounce iteration
 ;===========================================================
     xor     r13d, r13d          ; zero bounce index
 trace_ray:
     movaps  xmm12, dqword [v4_inf]
-    movaps  xmm13, xmm10
-    subps   xmm13, dqword [box_init]
     xor     r9, r9            ; zero object trace index TODO: calc offset from this
 test_intersection:
     lea     rsi, [box_offsets]
@@ -384,7 +383,7 @@ test_intersection:
     mov     rdi, 16
     mul     rdi
     add     rsi, rax
-    addps   xmm13, dqword [rsi]
+    movaps  xmm13, dqword [rsi] ; xmm13: box offset
 
     ; We determine whether the ray intersects with an
     ; axis aligned box centered at the origin.
@@ -393,16 +392,18 @@ test_intersection:
 
     ; vec3 r_inv = 1.0 / r_dir
     movaps  xmm0, xmm11         ; calculate inverse of ray direction
-    movaps  xmm8, dqword [v4_one]
-    divps   xmm8, xmm0          ; xmm8 = ray inverse direction. apparently, a
+    movaps  xmm1, dqword [v4_one]
+    divps   xmm1, xmm0          ; xmm1 = ray inverse direction. apparently, a
                                 ; divide by 0 (=infinity) still works here.
     ; vec3 n = r_inv * r_origin
-    movaps  xmm7, xmm8          ; xmm7: ray inverse
-    mulps   xmm7, xmm13         ; xmm7: n
+    movaps  xmm7, xmm1          ; xmm7: ray inverse
+    movaps  xmm0, xmm10
+    addps   xmm0, xmm13         ; xmm0: offset ray
+    mulps   xmm7, xmm0          ; xmm7: n
     xorps   xmm7, dqword [v4_sign_mask] ; xmm7: -n
 
     ; vec3 k = abs(r_inv) * box_size
-    movaps  xmm6, xmm8          ; xmm6: ray inverse
+    movaps  xmm6, xmm1          ; xmm6: ray inverse
     andps   xmm6, dqword [abs_mask] ; xmm6: abs(ray inverse)
     mulps   xmm6, dqword [v4_boxmax] ; xmm6: k
 
@@ -437,14 +438,14 @@ test_intersection:
 
     ; if (t_far < 0.0) no intersect
     ucomiss xmm4, [v4_zero]
-    jbe      end_intersection
+    jbe     end_intersection
 
     ; if(t_far < t_near) no intersect
     ucomiss xmm4, xmm5
     jbe     end_intersection
 
     movss   xmm12, xmm5         ; track the closest t_near
-    movaps  xmm10, xmm13        ; track ray origin of closest t
+    movaps  xmm8, xmm13         ; track box offset of closest t
     movaps  xmm14, xmm7         ; track t1 of closest t
 end_intersection:
     inc     r9d
@@ -463,22 +464,23 @@ end_intersection:
     jg      calculate_sample_color
 
     ; Get normal of intersection
-    movaps  xmm8, xmm14          ; xmm8: t1
+    movaps  xmm0, xmm14         ; xmm0: t1
     shufps  xmm12, xmm12, 0
-    cmpps   xmm8, xmm12, 5
-    andps   xmm8, dqword [v4_one]
+    cmpps   xmm0, xmm12, 5
+    andps   xmm0, dqword [v4_one]
     
     ; Multiply by -sign of ray direction
-    movaps  xmm0, xmm11
-    andps   xmm0, dqword [v4_sign_mask] ; died in a car accident
-    xorps   xmm0, dqword [v4_sign_mask]
-    xorps   xmm8, xmm0          ; xmm8: normal
-    v3norm xmm8
+    movaps  xmm1, xmm11
+    andps   xmm1, dqword [v4_sign_mask] ; died in a car accident
+    xorps   xmm1, dqword [v4_sign_mask]
+    xorps   xmm0, xmm1          ; xmm0: normal
+    v3norm xmm0
 
     ; Calculate hit position, which is origin of our next ray
     ; r_origin + r_dir * closest_t;
-    mulps   xmm12, xmm11         ; xmm12: r_dir * closest_t
-    addps   xmm10, xmm12         ; xmm10: hit position, new ray origin
+    mulps   xmm12, xmm11        ; xmm12: r_dir * closest_t
+    addps   xmm10, xmm12        ; xmm10: hit position, new ray origin
+    subps   xmm10, xmm8         ; add box offset of ray position
 
 ; usable xmm registers: xmm1, xmm2, xmm3, xmm4, xmm6, xmm7
 ; material
@@ -495,17 +497,15 @@ if material eq 0
     blendps xmm11, xmm6, 0010b
     blendps xmm11, xmm4, 0100b
     v3norm  xmm11
-    addps   xmm11, xmm8          ; xmm11 is the new direction
+    addps   xmm11, xmm0          ; xmm11 is the new direction
 else if material eq 1
     ; Calculate metallic reflection
     ; reflected vector = v - 2.0 * dot(v,n) * n
-    movaps  xmm7, xmm8          ; xmm7: normal
+    movaps  xmm7, xmm0          ; xmm7: normal
     dpps    xmm7, xmm11, 11111111b ; xmm7: dot(v,n)
-    mulps   xmm7, xmm8          ; xmm7: dot(v,n) * n
+    mulps   xmm7, xmm0          ; xmm7: dot(v,n) * n
     mulps   xmm7, dqword [v4_two] ; xmm7: 2.0 * dot(v,n) * n
     subps   xmm11, xmm7         ; xmm11: reflected vector
-    ; if we don't normalize, fuzz factor will vary by ray length.
-    ; TODO: test it once we get there.
     v3norm  xmm11
 
     frand_normal xmm7
@@ -517,20 +517,21 @@ else if material eq 1
     blendps xmm7, xmm4, 0100b
     v3norm  xmm7
     mulps   xmm7, dqword [v4_fuzz_factor]
-    ;addps   xmm11, xmm7          ; xmm11 is the new direction
+    addps   xmm11, xmm7          ; xmm11 is the new direction
 end if
 
     jmp     trace_ray
 
 calculate_sample_color:
-    movaps  xmm8, dqword [v4_bg]
-    ;movaps  xmm8, xmm11         ; bg color from ray direction
-    v3norm  xmm8
-    ;andps   xmm8, dqword [abs_mask] ; xmm8: absolute value for color
-    mulps   xmm8, xmm9          ; attenuate color from bounces
-    ;mulps   xmm8, dqword [v4_two]
-    maxps   xmm8, dqword [v4_zero]
-    addps   xmm15, xmm8         ; add to color sum
+    movaps  xmm0, dqword [v4_bg]
+    movaps  xmm0, xmm11         ; bg color from ray direction
+    ;mulps   xmm0, dqword [v4_flipy]
+    v3norm  xmm0
+    mulps   xmm0, xmm9          ; attenuate color from bounces
+    ;addps   xmm0, dqword [v4_half]
+    mulps   xmm0, dqword [v4_1p5]
+    maxps   xmm0, dqword [v4_zero]
+    addps   xmm15, xmm0         ; add to color sum
     inc     r12d
     cmp     r12d, sample_count
     jl      sample_start
@@ -637,9 +638,10 @@ start_frame:
     movss   xmm0, [cam_theta]   ; xmm0, cam_theta
     addss   xmm0, [cam_theta_per_sec]
     movss   [cam_theta], xmm0   ; cam_theta += cam_theta_per_second
-    movss   xmm0, [cam_phi]   ; xmm0, cam_theta
+
+    movss   xmm0, [cam_phi]   ; xmm0, cam_phi
     addss   xmm0, [cam_phi_per_sec]
-    movss   [cam_phi], xmm0   ; cam_theta += cam_theta_per_second
+    movss   [cam_phi], xmm0   ; cam_phi += cam_phi_per_second
 
     movss   xmm0, [cam_theta]
     call    cosf
@@ -862,12 +864,12 @@ pixels_length        = 256
 fpixels_length equ 256.0
 pixels_count         = pixels_length * pixels_length
 pixel_buffer_size    = pixels_count * 4
-pixel_regions_stride = pixels_length
+pixel_regions_stride = pixels_length / 4
 pixel_regions_len    = pixels_count / pixel_regions_stride
-thread_count         = 7
-sample_count         = 4
-fsample_count equ 4.0
-bounce_max           = 16
+thread_count         = 11
+sample_count         = 12
+fsample_count equ 12.0
+bounce_max           = 32
 cube_iterations      = 27
 
 align 64
@@ -970,7 +972,7 @@ clear_a           dd 1.0
 cam_theta         dd -1.1
 cam_phi           dd 2.1
 cam_theta_per_sec dd 0.01
-cam_phi_per_sec dd 0.00
+cam_phi_per_sec dd 0.000
 cam_dist          dd 5.0
 i_pixels_length   dd pixels_length
 
@@ -981,37 +983,39 @@ v4_pixel_delta_v dd 0.0, 0.0, 0.0, 0.0
 v4_look_from     dd 0.0, 0.0, 0.0, 0.0
 v4_viewport_root dd 0.0, 0.0, 0.0, 0.0
 
-box_init dd 1.5, 1.5, 1.5, 0.0
+p1 equ -1.5
+p2 equ 0.0
+p3 equ 1.5
 box_offsets:
-    dd 0.0, 0.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 1.5, -3.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 1.5, -3.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
+    dd p1, p1, p1, p2
+    dd p1, p2, p1, p2
+    dd p1, p3, p1, p2
+    dd p2, p1, p1, p2
+    dd p2, p2, p1, p2
+    dd p2, p3, p1, p2
+    dd p3, p1, p1, p2
+    dd p3, p2, p1, p2
+    dd p3, p3, p1, p2
 
-    dd -3.0, -3.0, 1.5, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 1.5, -3.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 1.5, -3.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
+    dd p1, p1, p2, p2
+    dd p1, p2, p2, p2
+    dd p1, p3, p2, p2
+    dd p2, p1, p2, p2
+    dd p2, p2, p2, p2
+    dd p2, p3, p2, p2
+    dd p3, p1, p2, p2
+    dd p3, p2, p2, p2
+    dd p3, p3, p2, p2
 
-    dd -3.0, -3.0, 1.5, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 1.5, -3.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 1.5, -3.0, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
-    dd 0.0, 1.5, 0.0, 0.0
+    dd p1, p1, p3, p2
+    dd p1, p2, p3, p2
+    dd p1, p3, p3, p2
+    dd p2, p1, p3, p2
+    dd p2, p2, p3, p2
+    dd p2, p3, p3, p2
+    dd p3, p1, p3, p2
+    dd p3, p2, p3, p2
+    dd p3, p3, p3, p2
 
 ; useful numbers
 align 64
@@ -1022,26 +1026,28 @@ v4_boxmax       dd 0.5, 0.5, 0.5, 0.0
 v4_boxoff       dd 0.0, 1.25, 0.0, 0.0
 v4_inf          dd 0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000
 v4_negative_inf dd 0xFF800000, 0xFF800000, 0xFF800000, 0xFF800000
-v4_eps          dd 0.1, 0.1, 0.1, 0.1
+v4_eps          dd 0.02, 0.02, 0.02, 0.02
 v4_near_one     dd 0.98, 0.98, 0.98, 0.9
 v4_fuzz_factor  dd 0.04, 0.04, 0.04, 0.04
-v4_albedo       dd 0.66, 0.66, 0.66, 1.0
+v4_albedo       dd 0.7, 0.7, 0.7, 1.0
 v4_two          dd 2.0, 2.0, 2.0, 2.0
+v4_1p5          dd 1.5, 1.5, 1.5, 1.5
+v4_flipy        dd 1.0, -1.0, 1.0, 1.0
 v4_255          dd 255.0, 255.0, 255.0, 255.0
 v4_zero         dd 0.0, 0.0, 0.0, 0.0
 v4_half         dd 0.5, 0.5, 0.5, 0.5
 v4_three        dd 3.0, 3.0, 3.0, 3.0
 v4_four         dd 4.0, 4.0, 4.0, 4.0
 v4i_zero        dd 0, 0, 0, 0
-v4_bg           dd 1.0, 0.5, 0.75, 0.0
+v4_bg           dd 1.0, 1.0, 1.0, 0.0
 
 ; constants
 v4_lookat       dd 0.0, 0.0, 0.0, 0.0
 v4_sample_count dd fsample_count,fsample_count,fsample_count,fsample_count
 v4_upvector     dd 0.0, 1.0, 0.0, 0.0
 v4_focal_len    dd 1.0, 1.0, 1.0, 1.0
-v4_viewport_h   dd -15.0, -15.0, -15.0, -15.0
-v4_viewport_w   dd 15.0, 15.0, 15.0, 15.0
+v4_viewport_h   dd -21.0, -21.0, -21.0, -21.0
+v4_viewport_w   dd 21.0, 21.0, 21.0, 21.0
 v4_pixels_w     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
 v4_pixels_h     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
 v4_boxmin       dd -0.5, -0.5, -0.5, -0.5
