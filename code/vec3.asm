@@ -17,7 +17,7 @@ macro v3norm v {
     local is_zero
     local end
     movaps  xmm1, v             ; v and xmm1 both have vector
-    dpps    xmm1, xmm1, 11111111b ; xmm1 has dot product
+    dpps    xmm1, xmm1, 01110111b ; xmm1 has dot product
     rsqrtps xmm1, xmm1          ; xmm1 has reciprocal square root
     pxor    xmm2, xmm2
     ucomiss xmm1, xmm2          ; if xmm1 has magnitude 0, we return 0

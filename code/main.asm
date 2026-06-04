@@ -71,6 +71,7 @@ CLONE_FLAGS = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAND or CLONE_PARE
 extrn printf
 extrn sinf
 extrn cosf
+extrn fflush
 ; Glfw
 extrn glfwInit
 extrn glfwCreateWindow
@@ -324,15 +325,13 @@ all_threads_started:
 ; Renders a contiguous region of the pixel buffer.
 ;===========================================================
 render_region:
-    pxor    xmm15, xmm15         ; xmm15: color sum
 pixel_start:
+    pxor    xmm15, xmm15        ; xmm15: color sum
     xor     r12d, r12d          ; zero sample index
-; We've gathered the values listed above in xmm12-15 and
-; now it's time to do the tight pixel loop.
 sample_start:
     xor     edx, edx
     mov     eax, r10d
-    div     dword [i_pixels_length]
+    div     dword [i_pixels_w]
     mov     esi, edx            ; esi: x = (i % w)
     mov     ecx, eax            ; ecx: y = (i / w)
 
@@ -356,10 +355,9 @@ sample_start:
     addps   xmm11, xmm1
     addps   xmm11, dqword [v4_viewport_root] ; xmm11: pixel center
     subps   xmm11, dqword [v4_look_from]        ; xmm11: ray direction
-    ;v3norm  xmm11              ; normalize ray direction
+    ;v3norm  xmm11               ; normalize ray direction
     movaps  xmm10, dqword [v4_look_from] ; xmm10: ray origin from camera position
 
-    movaps  xmm9, dqword [v4_one] ; xmm9: color attenuation starts at v4(1.0)
 
 ;= TRACE RAY ===============================================
 ; We return here on every bounce, with the following
@@ -370,13 +368,18 @@ sample_start:
 ;   xmm11: current ray direction
 ;   xmm10: ray origin
 ;   xmm9:  current color attenuation
-;   xmm8:  closest box offset
 ;   r8:    bounce iteration
 ;===========================================================
+    pxor xmm0, xmm0 ; for tmp color only
+    movaps  dqword [v4_tmp_color], xmm0
+
     xor     r13d, r13d          ; zero bounce index
+    movaps  xmm9, dqword [v4_one] ; xmm9: color attenuation starts at v4(1.0)
 trace_ray:
-    movaps  xmm12, dqword [v4_inf]
-    xor     r9, r9            ; zero object trace index TODO: calc offset from this
+    movaps  xmm12, dqword [v4_inf] ; t_near
+    pxor    xmm14, xmm14
+    xor     r9, r9              ; zero object trace index TODO: calc offset from this
+    mov     rbp, 0              ; rbp: outside or inside normal
 test_intersection:
     lea     rsi, [box_offsets]
     mov     rax, r9
@@ -398,7 +401,7 @@ test_intersection:
     ; vec3 n = r_inv * r_origin
     movaps  xmm7, xmm1          ; xmm7: ray inverse
     movaps  xmm0, xmm10
-    addps   xmm0, xmm13         ; xmm0: offset ray
+    subps   xmm0, xmm13         ; xmm0: offset ray
     mulps   xmm7, xmm0          ; xmm7: n
     xorps   xmm7, dqword [v4_sign_mask] ; xmm7: -n
 
@@ -424,11 +427,11 @@ test_intersection:
     maxps   xmm5, xmm4          ; xmm5: t_near
 
     ucomiss xmm5, [v4_eps]
-    jl      end_intersection
+    jl      no_intersection
 
     ; if(t_near < t_closest) update t closest
     ucomiss xmm5, xmm12
-    jae     end_intersection   ; you make a movie... called flippa
+    jae     no_intersection     ; you make a movie... called flippa
 
     movaps  xmm4, xmm6
     movshdup xmm3, xmm6
@@ -436,17 +439,31 @@ test_intersection:
     movhlps xmm3, xmm4
     minps   xmm4, xmm3          ; xmm4: t_far
 
-    ; if (t_far < 0.0) no intersect
-    ucomiss xmm4, [v4_zero]
-    jbe     end_intersection
-
     ; if(t_far < t_near) no intersect
     ucomiss xmm4, xmm5
-    jbe     end_intersection
+    jbe     no_intersection
+
+    ; if (t_far < 0.0) no intersect
+    ucomiss xmm4, [v4_zero]
+    jbe     no_intersection
+
+    ; so like inigo says if tnear is > 0 or something
+    ; then we are outside.
 
     movss   xmm12, xmm5         ; track the closest t_near
-    movaps  xmm8, xmm13         ; track box offset of closest t
+    shufps  xmm12, xmm12, 0
+    cmp     rbp, 0
+    je      end_inter_outside
+    movss   xmm8, xmm4          ; track the closest t_far
+    shufps  xmm8, xmm8, 0
+    movaps  xmm14, xmm6         ; track t2 of closest t
+    shufps  xmm14, xmm14, 0
+    jmp end_intersection
+end_inter_outside:
     movaps  xmm14, xmm7         ; track t1 of closest t
+    jmp     end_intersection
+no_intersection:
+    movaps  xmm0, xmm11
 end_intersection:
     inc     r9d
     cmp     r9d, cube_iterations
@@ -455,39 +472,59 @@ end_intersection:
     ucomiss xmm12, [v4_inf]
     je      calculate_sample_color
 
-    ; Attenuate color
-    mulps   xmm9, dqword [v4_albedo]
-
     ; Stop bouncing rays if we are at max depth
     inc     r13d
     cmp     r13d, bounce_max
     jg      calculate_sample_color
 
     ; Get normal of intersection
-    movaps  xmm0, xmm14         ; xmm0: t1
-    shufps  xmm12, xmm12, 0
-    cmpps   xmm0, xmm12, 5
+    cmp     rbp, 0
+    je      normal_outside
+
+    movaps  xmm0, xmm8          ; xmm0: t_far
+    cmpps   xmm0, xmm14, 0
     andps   xmm0, dqword [v4_one]
-    
+
+    movaps  dqword [v4_tmp_color], xmm0
+    jmp normal_over
+normal_outside:
+    movaps  xmm0, xmm14         ; xmm0: t1
+    cmpps   xmm0, xmm12, 0
+    andps   xmm0, dqword [v4_one]
+    movaps  dqword [v4_tmp_color], xmm0
+normal_over:
     ; Multiply by -sign of ray direction
     movaps  xmm1, xmm11
     andps   xmm1, dqword [v4_sign_mask] ; died in a car accident
     xorps   xmm1, dqword [v4_sign_mask]
     xorps   xmm0, xmm1          ; xmm0: normal
-    v3norm xmm0
+    v3norm  xmm0
+    ; TODO: on second bounce in metal this is peculiar (cool though)
 
     ; Calculate hit position, which is origin of our next ray
     ; r_origin + r_dir * closest_t;
     mulps   xmm12, xmm11        ; xmm12: r_dir * closest_t
     addps   xmm10, xmm12        ; xmm10: hit position, new ray origin
-    subps   xmm10, xmm8         ; add box offset of ray position
+    movaps  xmm1, xmm0
+    mulps   xmm1, dqword [v4_eps]
+    cmp     rbp, 0
+    je      hit_pos_outside
+    mulps   xmm1, dqword [v4_negative_one]
+hit_pos_outside:
+    addps   xmm10, xmm1
 
 ; usable xmm registers: xmm1, xmm2, xmm3, xmm4, xmm6, xmm7
 ; material
 ;   0: diffuse
 ;   1: metallic
+;   2: glass
+;   3: normals
 material equ 1
-if material eq 0
+if material eq 0 ; DIFFUSE
+    ; Attenuate color
+    mulps   xmm9, dqword [v4_albedo]
+
+    v3norm xmm11
     ; Calculate diffuse reflection
     frand_normal xmm11
     frand_normal xmm6
@@ -498,11 +535,14 @@ if material eq 0
     blendps xmm11, xmm4, 0100b
     v3norm  xmm11
     addps   xmm11, xmm0          ; xmm11 is the new direction
-else if material eq 1
+else if material eq 1 ; METALLIC
+    ; Attenuate color
+    mulps   xmm9, dqword [v4_albedo]
+
     ; Calculate metallic reflection
     ; reflected vector = v - 2.0 * dot(v,n) * n
     movaps  xmm7, xmm0          ; xmm7: normal
-    dpps    xmm7, xmm11, 11111111b ; xmm7: dot(v,n)
+    dpps    xmm7, xmm11, 01110111b ; xmm7: dot(v,n)
     mulps   xmm7, xmm0          ; xmm7: dot(v,n) * n
     mulps   xmm7, dqword [v4_two] ; xmm7: 2.0 * dot(v,n) * n
     subps   xmm11, xmm7         ; xmm11: reflected vector
@@ -518,19 +558,102 @@ else if material eq 1
     v3norm  xmm7
     mulps   xmm7, dqword [v4_fuzz_factor]
     addps   xmm11, xmm7          ; xmm11 is the new direction
+else if material eq 2 ; GLASS
+    ; TODO: some notes:
+    ; * We want to track whether a traced ray is inside or
+    ;   outside an object. The ray from the camera always
+    ;   starts outside, so we better not ever have the
+    ;   camera inside an object, or else it will always be
+    ;   flipped
+    v3norm  xmm11
+
+    ; REFLECTION CALCULATION:
+    ; TODO: problem is we are mixing scalar/v4 calcs
+    ; without thinking about it properly
+    ; cos_theta = min(dot(-v,n),1.0)
+    movaps  xmm1, xmm11         ; xmm7: v
+    mulps   xmm1, dqword [v4_negative_one] ; xmm1: -v
+    dpps    xmm1, xmm0, 01110111b ; xmm1: dot(-v, n)
+    minps   xmm1, dqword [v4_one] ; xmm1: cos_theta
+
+    ; et = outside ? 1.0/refract_idx : refract_idx
+    ; r_out_perp = et * (v + cos_theta * n)
+    movaps  xmm2, xmm1          ; xmm2: cos_theta
+    mulps   xmm2, xmm0          ; cos_theta * n
+    addps   xmm2, xmm11         ; v + cos_theta * n
+
+    cmp     rbp, 0
+    je      glass_outside
+    ; TODO: QUITE PECULIAR! we are debugging this by
+    ; being 2x white if we are inside ...
+    ;movaps  xmm7, dqword [v4_one]
+    ;movaps  dqword [v4_tmp_color], xmm7
+    ;mulps   xmm7, xmm0
+
+    mov     rbp, 0
+    mulps   xmm2, dqword [v4_refract_idx]
+    jmp     glass_refract_over
+glass_outside:
+    mov     rbp, 1
+    mulps   xmm2, dqword [v4_refract_idx_reciprocal]
+
+    ; AND JUMPING TO black if we are outside
+    ;movaps  xmm7, dqword [v4_zero]
+    ;movaps  dqword [v4_tmp_color], xmm7
+glass_refract_over:
+    ; r_out_parallel = -sqrt(abs(1.0 - r_out_perp.len_squared())) * n
+    movaps  xmm3, xmm2
+    dpps    xmm3, xmm3, 01110111b ; xmm3: len_squared(r_out_perp)
+    mulps   xmm3, dqword [v4_negative_one] ; -len_squared(r_out_perp)
+    addps   xmm3, dqword [v4_one] ; 1.0 - len_squared(r_out_perp)
+    andps   xmm3, dqword [abs_mask] ; absolute value
+    sqrtps  xmm3, xmm3
+    mulps   xmm3, dqword [v4_negative_one]
+    mulps   xmm3, xmm0
+
+    ; new_dir = r_out_perp + r_out_parallel
+    addps   xmm3, xmm2
+    movaps  xmm11, xmm3
+
+    ;mulps   xmm11, dqword [v4_half]    ; * 0.5
+    ;addps   xmm11, dqword [v4_half]    ; + 0.5
+    ;andps   xmm11, dqword [abs_mask]
+    ;v3norm  xmm11
+
+
+    ; The above doesn't account for total internal refraction
+    ; To solve for that, we need to do the following:
+    ;
+    ; cos_theta = calculated above
+    ; sin_theta = sqrt(1.0 - cos_theta * cos_theta)
+    ; if(v * sin_theta > 1.0) reflect instead of refract
+    ; else() refract or chance to refract
+
+    ; At this point we still haven't varied the reflectivity
+    ; with ray angle. At steep angles, the reflectance of
+    ; the surface increases.
+    ;
+    ; r0 = (1.0 - refract_idx) / (1.0 + refract_idx);
+    ; r0 = r0 * r0;
+    ; reflect_chance = r0 + (1.0 - r0) * pow(1.0 - cos_theta, 5)
+else if material eq 3 ; NORMALS
+    movaps  xmm11, xmm0
 end if
 
     jmp     trace_ray
 
 calculate_sample_color:
-    movaps  xmm0, dqword [v4_bg]
-    movaps  xmm0, xmm11         ; bg color from ray direction
-    ;mulps   xmm0, dqword [v4_flipy]
+    ; TODO: this is rightly 11
+    movaps  xmm0, xmm11
+    ;movaps  xmm0, dqword [v4_tmp_color];         ; bg color from ray direction
     v3norm  xmm0
+    ;addps   xmm0, dqword [v4_bg_bias]
+    ;mulps   xmm0, dqword [v4_flipy]
+    maxps   xmm0, dqword [v4_zero] ; clamp to min 0, otherwise
+                                   ; colors cancel out and make
+                                   ; (cool looking) lines.
     mulps   xmm0, xmm9          ; attenuate color from bounces
-    ;addps   xmm0, dqword [v4_half]
-    mulps   xmm0, dqword [v4_1p5]
-    maxps   xmm0, dqword [v4_zero]
+    ;mulps   xmm0, dqword [v4_1p5]
     addps   xmm15, xmm0         ; add to color sum
     inc     r12d
     cmp     r12d, sample_count
@@ -538,12 +661,31 @@ calculate_sample_color:
 
 write_to_pixel:
     divps   xmm15, dqword [v4_sample_count] ; average samples
+    sqrtps  xmm15, xmm15
     mulps   xmm15, dqword [v4_255] ; xmm15 scaled by 255 for rgb space
     cvtps2dq xmm15, xmm15         ; convert to dword integers
     packusdw xmm15, xmm15         ; pack into 16bit words
     packuswb xmm15, xmm15         ; pack into bytes
 
     movd    dword [pixels+r10d*4], xmm15 ; move to pixel location
+
+if 1
+    push    r9
+    push    r10
+    push    r11
+    push    r12
+    lea     rax, [pixels+r10d*4]
+    mov     rcx, [rax+2]
+    mov     rdx, [rax+1]
+    mov     rsi, [rax+0]
+    mov     rdi, img_line
+    call    printf
+    pop     r12
+    pop     r11
+    pop     r10
+    pop     r9
+end if
+    
     inc     r10d
     cmp     r10d, r11d
     jl      pixel_start
@@ -563,8 +705,8 @@ end_frame:
     push    0x1401              ; GL_UNSIGNED_BYTE
     push    0x1908              ; GL_RGBA
     mov     r9d, 0
-    mov     r8d, pixels_length
-    mov     ecx, pixels_length
+    mov     r8d, pixels_h
+    mov     ecx, pixels_w
     mov     edx, 0x1908         ; GL_RGBA
     mov     esi, 0
     mov     edi, 0x0DE1         ; GL_TEXTURE_2D
@@ -611,6 +753,9 @@ end_frame:
     call    glfwSwapBuffers
     call    glfwPollEvents
 
+    mov     rdi, 0
+    call    fflush
+
 ;= START FRAME =============================================
 ; Starting a new frame involves the following tasks:
 ; * Asking GLFW if we should exit
@@ -619,6 +764,10 @@ end_frame:
 ;   counter to 0
 ;===========================================================
 start_frame:
+
+    mov     rdi, img_header
+    call    printf
+
     ;============
     ; QUERY GLFW
     ;============
@@ -855,48 +1004,34 @@ compile_shader_success:
     add     rsp, 40
     ret
 
+
 ;===========================================================
-section '.data' writeable align 64
+section '.data' align 64
 ;===========================================================
 
 ; Symbols
-pixels_length        = 256
-fpixels_length equ 256.0
-pixels_count         = pixels_length * pixels_length
+pixels_w             = 270
+pixels_h             = 480
+fpixels_w equ 270.0
+fpixels_h equ 480.0
+pixels_count         = pixels_w * pixels_h
 pixel_buffer_size    = pixels_count * 4
-pixel_regions_stride = pixels_length / 4
+pixel_regions_stride = pixels_count
 pixel_regions_len    = pixels_count / pixel_regions_stride
-thread_count         = 11
-sample_count         = 12
-fsample_count equ 12.0
+thread_count         = 1
+sample_count         = 32
+fsample_count equ 32.0
 bounce_max           = 32
 cube_iterations      = 27
 
 align 64
-pixels rb pixel_buffer_size
-
-rand_seeds:
-repeat thread_count
-    align 64
-    dq % * 1000
-end repeat
-
-align 64
-exit_program           dd 0
-align 64
-pixel_regions_started  dd 0
-align 64
-pixel_regions_complete dd 0
-
-align 64
 msglen       = 4096
-; WARNING: v4_pixels__ below needs to match these
 
-align 64
-msg         db "Reached the point\n" ; general purpose string buffer
-align 64
+img_header  db 'P3', 10, '270 480', 10, '255', 10, 0
+img_line    db '%hhu %hhu %hhu', 10, 0
+
+msg         db 'msg error', 10, 0
 window_name db 'Empedocles Renderer', 0
-
 debug_msg   db 'cam %f, %f, %f', 10, 0
 
 ;= SHARED MEMORY ===========================================
@@ -927,8 +1062,6 @@ debug_msg   db 'cam %f, %f, %f', 10, 0
 ;   ems: emit chance
 ;-----------------------------------------------------------
 ;===========================================================
-align 16
-
 ;= THREAD LOCAL MEMORY =====================================
 ; Threads keep track of their own set of multiple operation
 ; lists. Elements in the list all represent both the state
@@ -964,28 +1097,28 @@ align 16
 ;
 ;===========================================================
 ; render data
-align 16
+align 64
 clear_r           dd 0.3
 clear_g           dd 0.1
 clear_b           dd 0.2
 clear_a           dd 1.0
-cam_theta         dd -1.1
-cam_phi           dd 2.1
 cam_theta_per_sec dd 0.01
 cam_phi_per_sec dd 0.000
-cam_dist          dd 5.0
-i_pixels_length   dd pixels_length
+cam_dist          dd 4.5
+i_pixels_w        dd pixels_w
 
 align 64
-; pulled from registers at start. refactor
-v4_pixel_delta_u dd 0.0, 0.0, 0.0, 0.0
-v4_pixel_delta_v dd 0.0, 0.0, 0.0, 0.0
-v4_look_from     dd 0.0, 0.0, 0.0, 0.0
-v4_viewport_root dd 0.0, 0.0, 0.0, 0.0
+rand_seeds:
+repeat thread_count
+    align 64
+    dq % * 1000
+end repeat
 
+align 64
 p1 equ -1.5
 p2 equ 0.0
 p3 equ 1.5
+box_size dd 1.0, 1.0, 1.0, 1.0
 box_offsets:
     dd p1, p1, p1, p2
     dd p1, p2, p1, p2
@@ -1020,47 +1153,82 @@ box_offsets:
 ; useful numbers
 align 64
 v4_one          dd 1.0, 1.0, 1.0, 1.0
-v4_sign_mask    dd 0x80000000, 0x80000000, 0x80000000, 0x80000000
-abs_mask        dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF
+v4_sign_mask    dd 0x80000000, 0x80000000, 0x80000000, 0
+abs_mask        dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0
 v4_boxmax       dd 0.5, 0.5, 0.5, 0.0
 v4_boxoff       dd 0.0, 1.25, 0.0, 0.0
-v4_inf          dd 0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000
-v4_negative_inf dd 0xFF800000, 0xFF800000, 0xFF800000, 0xFF800000
-v4_eps          dd 0.02, 0.02, 0.02, 0.02
-v4_near_one     dd 0.98, 0.98, 0.98, 0.9
-v4_fuzz_factor  dd 0.04, 0.04, 0.04, 0.04
-v4_albedo       dd 0.7, 0.7, 0.7, 1.0
-v4_two          dd 2.0, 2.0, 2.0, 2.0
-v4_1p5          dd 1.5, 1.5, 1.5, 1.5
-v4_flipy        dd 1.0, -1.0, 1.0, 1.0
-v4_255          dd 255.0, 255.0, 255.0, 255.0
+v4_inf          dd 0x7F800000, 0x7F800000, 0x7F800000, 0
+v4_negative_inf dd 0xFF800000, 0xFF800000, 0xFF800000, 0
+v4_eps          dd 0.01, 0.01, 0.01, 0.00
+v4_fuzz_factor  dd 0.01, 0.01, 0.01, 0.00
+v4_refract_idx  dd 1.1, 1.1, 1.1, 0.0
+v4_refract_idx_reciprocal dd 0.90909, 0.090909, 0.09090, 0.0
+v4_albedo       dd 0.9, 0.9, 0.9, 0.0
+v4_two          dd 2.0, 2.0, 2.0, 0.0
+v4_1p5          dd 1.5, 1.5, 1.5, 0.0
+v4_flipy        dd 1.0, -1.0, 1.0, 0.0
+v4_255          dd 255.0, 255.0, 255.0, 0.0
 v4_zero         dd 0.0, 0.0, 0.0, 0.0
-v4_half         dd 0.5, 0.5, 0.5, 0.5
-v4_three        dd 3.0, 3.0, 3.0, 3.0
-v4_four         dd 4.0, 4.0, 4.0, 4.0
-v4i_zero        dd 0, 0, 0, 0
+v4_half         dd 0.5, 0.5, 0.5, 0.0
+v4_three        dd 3.0, 3.0, 3.0, 0.0
+v4_four         dd 4.0, 4.0, 4.0, 0.0
+v4_ten          dd 10.0, 10.0, 10.0, 0.0
 v4_bg           dd 1.0, 1.0, 1.0, 0.0
+v4_bg_bias      dd 0.1, 0.1, 0.1, 0.0
+v4_near_one     dd 0.99, 0.99, 0.99, 0.0
+v4_more_one     dd 1.10, 1.10, 1.10, 0.0
+v4_negative_one dd -1.0, -1,0, -1.0, 0.0
+v4i_zero        dd 0, 0, 0, 0
 
 ; constants
+align 64
 v4_lookat       dd 0.0, 0.0, 0.0, 0.0
-v4_sample_count dd fsample_count,fsample_count,fsample_count,fsample_count
+v4_sample_count dd fsample_count,fsample_count,fsample_count,0.0
 v4_upvector     dd 0.0, 1.0, 0.0, 0.0
-v4_focal_len    dd 1.0, 1.0, 1.0, 1.0
-v4_viewport_h   dd -21.0, -21.0, -21.0, -21.0
-v4_viewport_w   dd 21.0, 21.0, 21.0, 21.0
-v4_pixels_w     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
-v4_pixels_h     dd fpixels_length, fpixels_length, fpixels_length, fpixels_length
-v4_boxmin       dd -0.5, -0.5, -0.5, -0.5
-v4_negative_one dd -1.0, -1,0, -1.0, -1.0
+v4_focal_len    dd 2.0, 2.0, 2.0, 0.0
+v4_viewport_h   dd -32.0, -32.0, -32.0, -0.0
+v4_viewport_w   dd 18.0, 18.0, 18.0, 0.0
+v4_pixels_w     dd fpixels_w, fpixels_w, fpixels_w, 0.0
+v4_pixels_h     dd fpixels_h, fpixels_h, fpixels_h, 0.0
+v4_boxmin       dd -0.5, -0.5, -0.5, -0.0
 
-; gl data
-glfw_window  rq 1
-gl_texture   rd 1
-gl_vao       rd 1
-gl_program   rd 1
+align 64
 verts        dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
 verts_len    dd 12
 
 include 'generation/generated_data.asm'
 vert_src_ptr dq vert_src
 frag_src_ptr dq frag_src
+
+;===========================================================
+section '.bss' align 64
+;===========================================================
+
+align 64
+cam_theta         dd -1.1
+cam_phi           dd 2.1
+
+align 64
+pixels rb pixel_buffer_size
+
+align 64
+exit_program           dd 0
+align 64
+pixel_regions_started  dd 0
+align 64
+pixel_regions_complete dd 0
+
+align 64
+; pulled from registers at start. refactor
+v4_pixel_delta_u dd 0.0, 0.0, 0.0, 0.0
+v4_pixel_delta_v dd 0.0, 0.0, 0.0, 0.0
+v4_look_from     dd 0.0, 0.0, 0.0, 0.0
+v4_viewport_root dd 0.0, 0.0, 0.0, 0.0
+v4_tmp_color     dd 1.0, 1.0, 1.0, 0.0
+
+; gl data
+align 64
+glfw_window  rq 1
+gl_texture   rd 1
+gl_vao       rd 1
+gl_program   rd 1
