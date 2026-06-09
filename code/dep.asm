@@ -358,7 +358,6 @@ sample_start:
     ;v3norm  xmm11               ; normalize ray direction
     movaps  xmm10, dqword [v4_look_from] ; xmm10: ray origin from camera position
 
-
 ;= TRACE RAY ===============================================
 ; We return here on every bounce, with the following
 ; registers remaining stable and updated on every bounce.

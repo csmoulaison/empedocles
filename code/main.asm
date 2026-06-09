@@ -3,15 +3,51 @@ format ELF64
 include 'vec3.asm'
 include 'rand.asm'
 
-CLONE_VM      = 0x00000100
-CLONE_FS      = 0x00000200
-CLONE_FILES	  = 0x00000400
-CLONE_SIGHAND = 0x00000800
-CLONE_PARENT  = 0x00008000
-CLONE_THREAD  = 0x00010000
-CLONE_IO      = 0x80000000
-CLONE_FLAGS = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAND or CLONE_PARENT or CLONE_THREAD or CLONE_IO
+;= Configuration Symbols ===================================
+THREAD_COUNT          equ 1
+SAMPLE_COUNT            = 4
+FSAMPLE_COUNT         equ 4.0
+BOUNCE_COUNT            = 32
+CUBES_COUNT             = 1
 
+PIXELS_W                = 256
+FPIXELS_W             equ 256.0
+PIXELS_H                = 256
+FPIXELS_H             equ 256.0
+PIXELS_COUNT            = PIXELS_W * PIXELS_H
+PIXEL_BUFFER_SIZE       = PIXELS_COUNT * 4
+REGION_STRIDE           = PIXELS_COUNT / 4
+REGIONS_COUNT           = PIXELS_COUNT / REGION_STRIDE
+
+OUTPUT_FRAMES_TO_FILE   = 0
+
+CLONE_VM                = 0x00000100
+CLONE_FS                = 0x00000200
+CLONE_FILES	            = 0x00000400
+CLONE_SIGHAND           = 0x00000800
+CLONE_PARENT            = 0x00008000
+CLONE_THREAD            = 0x00010000
+CLONE_IO                = 0x80000000
+CLONE_FLAGS             = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAND or CLONE_PARENT or CLONE_THREAD or CLONE_IO
+
+;= Structs =================================================
+struc Thread seed {
+    align 64
+    .color_sum      dq 2
+    .pid            rd 1
+    .seed           dd seed
+    .current_pixel  rd 1
+    .end_pixel      rd 1
+    .sample_index   rb 1
+    .bounce_index   rb 1
+    .object_index   rb 1
+}
+
+;= External Functions ======================================
+extrn printf
+extrn sinf
+extrn cosf
+extrn fflush
 extrn gl3wInit
 extrn gl3wIsSupported
 extrn glfwInit
@@ -48,33 +84,6 @@ extrn glGetShaderiv
 extrn glGetShaderInfoLog
 extrn glUseProgram
 extrn glDrawArrays
-
-;= Configuration Symbols ===================================
-thread_count         = 1
-sample_count         = 4
-fsample_count      equ 4.0
-bounce_count         = 32
-cubes_count          = 1
-
-pixels_w             = 256
-pixels_h             = 256
-pixels_count         = pixels_w * pixels_h
-pixel_buffer_size    = pixels_count * 4
-region_stride        = pixels_w
-regions_len          = pixels_count / pixel_regions_stride
-
-output_frame_to_file = 1
-
-;= Structs =================================================
-struc ThreadMemory seed {
-    .seed         dd seed
-    .pid          dd 0
-    .start_pixel  dd 0
-    .end_pixel    dd 0
-    .sample_index db 0
-    .bounce_index db 0
-    .object_index db 0
-}
 
 ;===========================================================
 section '.text' executable
@@ -231,30 +240,30 @@ _start:
 ; instance of a thread-local structure.
 ;===========================================================
     mov     [regions_completed], 0
-    mov     [regions_started], regions_count ; otherwise the threads
+    mov     [regions_started], REGIONS_COUNT ; otherwise the threads
                                              ; will start before the
                                              ; first frame is ready.
     lea     r15, [thread_memory_array] ; Define base values for host thread
-    mov     [r15+ThreadMemory+pid], 0  ; pid = 0 for host thread
-if thread_count > 1
-    repeat thread_count-1
-        local not_child_thread
+    mov     [r15+Thread.pid], 0        ; pid = 0 for host thread
+if THREAD_COUNT > 1
+    rept THREAD_COUNT-1 count {
+        local end_thread_creation
         mov     rax, 56             ; sys_clone
         mov     rdi, CLONE_FLAGS    ; flags
-        lea     rsi, [thread_memory_array + ThreadMemory.sizeof * %] ; child stack pointer
+        lea     rsi, [thread_memory_array + Thread.size * %] ; child stack pointer
         mov     rdx, 0              ; parent thread id
-        mov     r10, %              ; child thread id
+        mov     r10, count          ; child thread id
         mov     r8, 0               ; child thread local storage
         syscall
         cmp     rax, 0
         jl      exit                ; error creating thread
-        je      not_child_thread
+        je      end_thread_creation
         mov     r15, rsp            ; store thread memory ptr in r15
-        mov     [r15+pid], rax      ; store pid
+        mov     [r15+Thread.pid], eax ; store pid
         jmp     thread_idle         ; child threads jump straight to idle and
                                     ; wait for work...
-not_child_thread:
-    end repeat
+    end_thread_creation:
+    }
 end if
     jmp     start_frame             ; ...while the host thread instead prepares
                                     ; the first frame
@@ -280,23 +289,24 @@ thread_idle:
     je      exit                    ; with program_terminated
     mov     eax, 1
     lock    xadd [regions_started], eax ; iterate regions_started, storing the
-                                        ; next region index in eax
-    cmp     eax, regions_len
+                                        ; last region index in eax
+    cmp     eax, REGIONS_COUNT
     jge     all_regions_started
                                     ; We have a region to render:
-    mov     r8, region_stride       ; calculate start pixel index
-    mul     r8                      ; store stride * index (eax) in r8
-    mov     [r15+ThreadMemory.start_pixel], r8
-    add     r8, region_stride       ; add stride to get end pixel index
-    mov     [r15+ThreadMemory.end_pixel], r8
+    mov     r8d, REGION_STRIDE      ; calculate start pixel index
+    mul     r8d                     ; store stride * index (eax) in r8d
+    mov     [r15+Thread.current_pixel], r8d
+    add     r8d, REGION_STRIDE      ; add stride to get end pixel index
+    mov     [r15+Thread.end_pixel], r8d
     jmp     render_region
 all_regions_started:
-    cmp     [r15+ThreadMemory.pid], 0
-    je      thread_idle             ; child threads keep patiently waiting
+    cmp     [r15+Thread.pid], 0
+    jne     thread_idle             ; child threads keep patiently waiting
 check_regions_complete:
-    cmp     [regions_completed], regions_len ; the host thread instead wants to
-    jge     end_frame                        ; know if all the regions are
-    jmp     thread_idle                      ; complete so it can end the frame
+    ;jmp     exit_host
+    cmp     [regions_completed], REGIONS_COUNT ; the host thread instead wants to
+    jge     end_frame                          ; know if all the regions are
+    jmp     thread_idle                        ; complete so it can end the frame
 
 ;= Start Frame =============================================
 ; The host executes this before every frame is rendered
@@ -312,9 +322,9 @@ start_frame:
     mov     rdi, [glfw_window]      ; If GLFW has recieved a close request, we
     call    glfwWindowShouldClose   ; politely comply
     cmp     eax, 1
-    je      host_exit
+    je      exit_host
 
-if output_frames_to_file            ; For rendering ppm frames
+if OUTPUT_FRAMES_TO_FILE            ; For rendering ppm frames
     mov     rdi, img_header
     call    printf
 end if
@@ -351,13 +361,56 @@ end if
 ;   }
 ;
 ; After we finish rendering the region, we iterate
-; regions_complete and jump back to thread_idle to wait for
+; regions complete and jump back to thread idle to wait for
 ; more work.
 ;===========================================================
 render_region:
-    ; Return to thread_idle to wait for more work
-    lock add [regions_complete], 1
-    jmp thread_idle
+pixel_start:
+    mov     [r15+Thread.sample_index], 0
+    pxor    xmm0, xmm0
+    movaps  dqword [r15+Thread.color_sum], xmm0
+sample_start:
+    xor     edx, edx
+    mov     eax, [r15+Thread.current_pixel]
+    div     [pixels_w]
+    cvtsi2ss xmm0, edx              ; x (i % w)
+    cvtsi2ss xmm1, eax              ; y (i / w)
+
+    ; For now, we are rendering a gradient
+    divps   xmm0, dqword [v4_pixels_w]
+    divps   xmm1, dqword [v4_pixels_w]
+    shufps  xmm0, xmm0, 0
+    shufps  xmm1, xmm1, 0
+    mulps   xmm0, dqword [v4_red]
+    mulps   xmm1, dqword [v4_green]
+    addps   xmm0, xmm1
+    movaps  xmm1, dqword [r15+Thread.color_sum]
+    addps   xmm0, xmm1
+    movaps  dqword [r15+Thread.color_sum], xmm0
+
+    inc     [r15+Thread.sample_index]
+    cmp     [r15+Thread.sample_index], SAMPLE_COUNT
+    jl      sample_start
+
+write_to_pixel:
+    movaps  xmm0, dqword [r15+Thread.color_sum]
+    divps   xmm0, dqword [v4_sample_count]
+    sqrtps  xmm0, xmm0              ; correct gamma
+    mulps   xmm0, dqword [v4_255]
+    cvtps2dq xmm0, xmm0             ; convert to dword integers
+    packusdw xmm0, xmm0             ; pack into 16bit words
+    packuswb xmm0, xmm0             ; pack into bytes
+    mov     r8d, [r15+Thread.current_pixel]
+    movd    dword [pixels+r8d*4], xmm0 ; move to pixel location
+
+    inc     [r15+Thread.current_pixel]
+    mov     r8d, [r15+Thread.end_pixel]
+    cmp     [r15+Thread.current_pixel], r8d
+    jl      pixel_start
+
+    ; Return to thread idle to wait for more work
+    lock add [regions_completed], 1
+    jmp     thread_idle
 
 ;= End Frame ===============================================
 ; This is executed by the host thread once all pixel regions
@@ -373,8 +426,8 @@ end_frame:
     push    0x1401                  ; GL_UNSIGNED_BYTE
     push    0x1908                  ; GL_RGBA
     mov     r9d, 0
-    mov     r8d, pixels_h
-    mov     ecx, pixels_w
+    mov     r8d, PIXELS_H
+    mov     ecx, PIXELS_W
     mov     edx, 0x1908             ; GL_RGBA
     mov     esi, 0
     mov     edi, 0x0DE1             ; GL_TEXTURE_2D
@@ -394,10 +447,10 @@ end_frame:
     call    glViewport
     add     rsp, 16
 
-    movss   xmm3, [clear_a]
-    movss   xmm2, [clear_b]
-    movss   xmm1, [clear_g]
-    movss   xmm0, [clear_r]
+    movss   xmm3, [v4_zero]
+    movss   xmm2, [v4_zero]
+    movss   xmm1, [v4_zero]
+    movss   xmm0, [v4_zero]
     call    glClearColor
     mov     edi, 0x00004000         ; GL_COLOR_BUFFER_BIT
     call    glClear
@@ -421,7 +474,7 @@ end_frame:
     call    glfwSwapBuffers
     call    glfwPollEvents
 
-if output_render                    ; Flush stdout, otherwise if we exit the
+if OUTPUT_FRAMES_TO_FILE            ; Flush stdout, otherwise if we exit the
     mov     rdi, 0                  ; program at the start of the next frame it
     call    fflush                  ; might have insufficient time to finish
 end if                              ; writing data
@@ -490,33 +543,54 @@ compile_shader_success:
 section '.data' writable align 64
 ;===========================================================
 
-msglen       = 4096
-msg         db 'msg error', 10, 0
-window_name db 'Empedocles Renderer', 10, 0
-debug_msg   db 'cam %f, %f, %f', 10, 0
+msglen  = 4096
+msg             db 'msg error', 10, 0
+window_name     db 'Empedocles Renderer', 10, 0
+debug_msg       db 'cam %f, %f, %f', 10, 0
+img_header      db 'P3', 10, '270 480', 10, '255', 10, 0
+img_line        db '%hhu %hhu %hhu', 10, 0
 
 include 'generation/generated_data.asm'
-vert_src_ptr dq vert_src
-frag_src_ptr dq frag_src
-verts        dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
-verts_len    dd 12
+
+vert_src_ptr    dq vert_src
+frag_src_ptr    dq frag_src
+verts           dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
+verts_len       dd 12
+
+align 64
+pixels_w        dd PIXELS_W
+
+align 64
+v4_zero         dd 0.0, 0.0, 0.0, 0.0
+v4_one          dd 1.0, 1.0, 1.0, 0.0
+v4_red          dd 1.0, 0.0, 0.0, 1.0
+v4_green        dd 0.0, 1.0, 0.0, 1.0
+v4_blue         dd 0.0, 0.0, 1.0, 1.0
+v4_255          dd 255.0, 255.0, 255.0, 0.0
+v4_sample_count dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
+v4_pixels_w     dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
+v4_pixels_h     dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
 
 ;===========================================================
 section '.bss' align 64
 ;===========================================================
 
 virtual at 0
-    ThreadMemory ThreadMemory ?
+    Thread Thread ?
+    Thread.size = $ - Thread
 end virtual
 
-thread_regions_started   rd
-thread_regions_completed rd
-program_terminated       rb
+regions_started     rd 1
+regions_completed   rd 1
+program_terminated  rb 1
 
 align 64
-thread_memory_array ThreadMemory thread_count dup % * 1000 ; array of thread local memory
-                                                           ; % * 1000 is rand seed calculation
-glfw_window rq 1
-gl_texture  rd 1
-gl_vao      rd 1
-gl_program  rd 1
+pixels              rb PIXEL_BUFFER_SIZE
+
+align 64
+thread_memory_array rb Thread.size * THREAD_COUNT
+
+glfw_window         rq 1
+gl_texture          rd 1
+gl_vao              rd 1
+gl_program          rd 1
