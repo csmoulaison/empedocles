@@ -307,8 +307,8 @@ thread_idle:
     cmp     eax, pixel_regions_len
     jge     all_threads_started
     mov     r10d, pixel_regions_stride
-    mul     r10d                 ; edi: pixel_regions_stride * region index
-    mov     r10d, eax            ; edi: pixel start index
+    mul     r10d                ; edi: pixel_regions_stride * region index
+    mov     r10d, eax           ; edi: pixel start index
     mov     r11d, r10d
     add     r11d, pixel_regions_stride ; r14: pixel end index
     jmp     render_region
