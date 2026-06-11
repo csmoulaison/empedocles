@@ -1,94 +1,94 @@
-DEFAULT ABS
-
-%include 'vec3.asm'
-%include 'rand.asm'
+format ELF64
+include 'vec3.asm'
+include 'rand.asm'
 
 ;= Configuration Symbols ===================================
-THREAD_COUNT            equ 2
-SAMPLE_COUNT            equ 4
-%define FSAMPLE_COUNT       4.0
-BOUNCE_COUNT            equ 32
-CUBES_COUNT             equ 1
+THREAD_COUNT          equ 1
+SAMPLE_COUNT            = 4
+FSAMPLE_COUNT         equ 4.0
+BOUNCE_COUNT            = 32
+CUBES_COUNT             = 1
 
-PIXELS_W                equ 256
-%define FPIXELS_W           256.0
-PIXELS_H                equ 256
-%define FPIXELS_H           256.0
-PIXELS_COUNT            equ PIXELS_W * PIXELS_H
-PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
-REGION_STRIDE           equ PIXELS_COUNT / 4
-REGIONS_COUNT           equ PIXELS_COUNT / REGION_STRIDE
+PIXELS_W                = 256
+FPIXELS_W             equ 256.0
+PIXELS_H                = 256
+FPIXELS_H             equ 256.0
+PIXELS_COUNT            = PIXELS_W * PIXELS_H
+PIXEL_BUFFER_SIZE       = PIXELS_COUNT * 4
+REGION_STRIDE           = PIXELS_COUNT / 4
+REGIONS_COUNT           = PIXELS_COUNT / REGION_STRIDE
 
-OUTPUT_FRAMES_TO_FILE   equ 0
+OUTPUT_FRAMES_TO_FILE   = 0
 
-CLONE_VM                equ 0x00000100
-CLONE_FS                equ 0x00000200
-CLONE_FILES	            equ 0x00000400
-CLONE_SIGHAND           equ 0x00000800
-CLONE_PARENT            equ 0x00008000
-CLONE_THREAD            equ 0x00010000
-CLONE_IO                equ 0x80000000
-CLONE_FLAGS             equ CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_PARENT | CLONE_THREAD | CLONE_IO
+CLONE_VM                = 0x00000100
+CLONE_FS                = 0x00000200
+CLONE_FILES	            = 0x00000400
+CLONE_SIGHAND           = 0x00000800
+CLONE_PARENT            = 0x00008000
+CLONE_THREAD            = 0x00010000
+CLONE_IO                = 0x80000000
+CLONE_FLAGS             = CLONE_VM or CLONE_FS or CLONE_FILES or CLONE_SIGHAND or CLONE_PARENT or CLONE_THREAD or CLONE_IO
 
 ;= Structs =================================================
-struc Thread
-    .color_sum      resq 1
-    .pid            resd 1
-    .seed           resd 1
-    .current_pixel  resd 1
-    .end_pixel      resd 1
-    .sample_index   resb 1
-    .bounce_index   resb 1
-    .object_index   resb 1
-endstruc
+struc Thread seed {
+    align 64
+    .color_sum      dq 2
+    .pid            rd 1
+    .seed           dd seed
+    .current_pixel  rd 1
+    .end_pixel      rd 1
+    .sample_index   rb 1
+    .bounce_index   rb 1
+    .object_index   rb 1
+}
 
 ;= External Functions ======================================
-extern printf
-extern sinf
-extern cosf
-extern fflush
-extern gl3wInit
-extern gl3wIsSupported
-extern glfwInit
-extern glfwCreateWindow
-extern glfwWindowHint
-extern glfwMakeContextCurrent
-extern glfwWindowShouldClose
-extern glfwSwapBuffers
-extern glfwPollEvents
-extern glfwTerminate
-extern glfwGetFramebufferSize
-extern glClearColor
-extern glClear
-extern glViewport
-extern glGenTextures
-extern glBindTexture
-extern glTexParameteri
-extern glTexImage2D
-extern glGenVertexArrays
-extern glBindVertexArray
-extern glGenBuffers
-extern glBindBuffer
-extern glVertexAttribPointer
-extern glEnableVertexAttribArray
-extern glBufferData
-extern glCreateProgram
-extern glAttachShader
-extern glLinkProgram
-extern glDeleteShader
-extern glCreateShader
-extern glShaderSource
-extern glCompileShader
-extern glGetShaderiv
-extern glGetShaderInfoLog
-extern glUseProgram
-extern glDrawArrays
+extrn printf
+extrn sinf
+extrn cosf
+extrn fflush
+extrn gl3wInit
+extrn gl3wIsSupported
+extrn glfwInit
+extrn glfwCreateWindow
+extrn glfwWindowHint
+extrn glfwMakeContextCurrent
+extrn glfwWindowShouldClose
+extrn glfwSwapBuffers
+extrn glfwPollEvents
+extrn glfwTerminate
+extrn glfwGetFramebufferSize
+extrn glClearColor
+extrn glClear
+extrn glViewport
+extrn glGenTextures
+extrn glBindTexture
+extrn glTexParameteri
+extrn glTexImage2D
+extrn glGenVertexArrays
+extrn glBindVertexArray
+extrn glGenBuffers
+extrn glBindBuffer
+extrn glVertexAttribPointer
+extrn glEnableVertexAttribArray
+extrn glBufferData
+extrn glCreateProgram
+extrn glAttachShader
+extrn glLinkProgram
+extrn glDeleteShader
+extrn glCreateShader
+extrn glShaderSource
+extrn glCompileShader
+extrn glGetShaderiv
+extrn glGetShaderInfoLog
+extrn glUseProgram
+extrn glDrawArrays
 
 ;===========================================================
-section .text
+section '.text' executable
 ;===========================================================
 
-global __dso_handle
+public __dso_handle
 __dso_handle:
     dd 0
 
@@ -100,7 +100,7 @@ exit:
     xor     rdi, rdi
     syscall 
 
-global _start
+public _start
 _start:
 ;= Platform Initialization =================================
 ; We create a window with glfw and initialize gl3w for
@@ -244,29 +244,26 @@ _start:
                                              ; first frame is ready.
     lea     r15, [thread_memory_array] ; Define base values for host thread
     mov     [r15+Thread.pid], 0        ; pid = 0 for host thread
-%if THREAD_COUNT > 1
-    %assign i 1
-    %rep THREAD_COUNT-1
-        %push thread_ctx
+if THREAD_COUNT > 1
+    rept THREAD_COUNT-1 count {
+        local end_thread_creation
         mov     rax, 56             ; sys_clone
         mov     rdi, CLONE_FLAGS    ; flags
-        lea     rsi, [thread_memory_array + Thread_size * i] ; child stack pointer
+        lea     rsi, [thread_memory_array + Thread.size * %] ; child stack pointer
         mov     rdx, 0              ; parent thread id
-        mov     r10, i              ; child thread id
+        mov     r10, count          ; child thread id
         mov     r8, 0               ; child thread local storage
         syscall
         cmp     rax, 0
-        jl      exit_host           ; error creating thread
-        je      %$end_thread_creation
+        jl      exit                ; error creating thread
+        je      end_thread_creation
         mov     r15, rsp            ; store thread memory ptr in r15
         mov     [r15+Thread.pid], eax ; store pid
         jmp     thread_idle         ; child threads jump straight to idle and
                                     ; wait for work...
-        %$end_thread_creation:
-        %pop
-    %assign i i+1
-    %endrep
-%endif
+    end_thread_creation:
+    }
+end if
     jmp     start_frame             ; ...while the host thread instead prepares
                                     ; the first frame
 
@@ -296,15 +293,16 @@ thread_idle:
     jge     all_regions_started
                                     ; We have a region to render:
     mov     r8d, REGION_STRIDE      ; calculate start pixel index
-    mul     r8d                     ; store stride * index (eax) in eax
-    mov     [r15+Thread.current_pixel], eax
-    add     eax, REGION_STRIDE      ; add stride to get end pixel index
-    mov     [r15+Thread.end_pixel], eax
+    mul     r8d                     ; store stride * index (eax) in r8d
+    mov     [r15+Thread.current_pixel], r8d
+    add     r8d, REGION_STRIDE      ; add stride to get end pixel index
+    mov     [r15+Thread.end_pixel], r8d
     jmp     render_region
 all_regions_started:
     cmp     [r15+Thread.pid], 0
     jne     thread_idle             ; child threads keep patiently waiting
 check_regions_complete:
+    ;jmp     exit_host
     cmp     [regions_completed], REGIONS_COUNT ; the host thread instead wants to
     jge     end_frame                          ; know if all the regions are
     jmp     thread_idle                        ; complete so it can end the frame
@@ -325,10 +323,10 @@ start_frame:
     cmp     eax, 1
     je      exit_host
 
-%if OUTPUT_FRAMES_TO_FILE            ; For rendering ppm frames
+if OUTPUT_FRAMES_TO_FILE            ; For rendering ppm frames
     mov     rdi, img_header
     call    printf
-%endif
+end if
 
     ; TODO: update logical camera, calculate viewport values
 
@@ -339,7 +337,6 @@ start_frame:
     ;mov    [regions_started], 0    ; Alternate way, want to profile to see
     ;mov    [regions_completed], 0  ; if it's faster or slower
     jmp     thread_idle             ; Back to thread_idle to work on rendering
-
 
 ;= Render Region ===========================================
 ; Threads execute this repeatedly until all regions have
@@ -370,35 +367,35 @@ render_region:
 pixel_start:
     mov     [r15+Thread.sample_index], 0
     pxor    xmm0, xmm0
-    movaps  [r15+Thread.color_sum], xmm0
+    movaps  dqword [r15+Thread.color_sum], xmm0
 sample_start:
-    xor     rax, rax
+    xor     edx, edx
     mov     eax, [r15+Thread.current_pixel]
-    div     dword [pixels_w]
+    div     [pixels_w]
     cvtsi2ss xmm0, edx              ; x (i % w)
     cvtsi2ss xmm1, eax              ; y (i / w)
 
     ; For now, we are rendering a gradient
-    divps   xmm0, [v4_pixels_w]
-    divps   xmm1, [v4_pixels_w]
+    divps   xmm0, dqword [v4_pixels_w]
+    divps   xmm1, dqword [v4_pixels_w]
     shufps  xmm0, xmm0, 0
     shufps  xmm1, xmm1, 0
-    mulps   xmm0, [v4_red]
-    mulps   xmm1, [v4_green]
+    mulps   xmm0, dqword [v4_red]
+    mulps   xmm1, dqword [v4_green]
     addps   xmm0, xmm1
-    movaps  xmm1, [r15+Thread.color_sum]
+    movaps  xmm1, dqword [r15+Thread.color_sum]
     addps   xmm0, xmm1
-    movaps  [r15+Thread.color_sum], xmm0
+    movaps  dqword [r15+Thread.color_sum], xmm0
 
     inc     [r15+Thread.sample_index]
     cmp     [r15+Thread.sample_index], SAMPLE_COUNT
     jl      sample_start
 
 write_to_pixel:
-    movaps  xmm0, [r15+Thread.color_sum]
-    divps   xmm0, [v4_sample_count]
+    movaps  xmm0, dqword [r15+Thread.color_sum]
+    divps   xmm0, dqword [v4_sample_count]
     sqrtps  xmm0, xmm0              ; correct gamma
-    mulps   xmm0, [v4_255]
+    mulps   xmm0, dqword [v4_255]
     cvtps2dq xmm0, xmm0             ; convert to dword integers
     packusdw xmm0, xmm0             ; pack into 16bit words
     packuswb xmm0, xmm0             ; pack into bytes
@@ -476,10 +473,10 @@ end_frame:
     call    glfwSwapBuffers
     call    glfwPollEvents
 
-%if OUTPUT_FRAMES_TO_FILE            ; Flush stdout, otherwise if we exit the
+if OUTPUT_FRAMES_TO_FILE            ; Flush stdout, otherwise if we exit the
     mov     rdi, 0                  ; program at the start of the next frame it
     call    fflush                  ; might have insufficient time to finish
-%endif                              ; writing data
+end if                              ; writing data
 
     jmp start_frame                 ; And off we go again
 
@@ -530,6 +527,8 @@ compile_shader:
     mov     rdx, msglen
     syscall
 
+    jmp     exit
+
 compile_shader_success:
     mov     esi, [rsp+0x10]
     mov     edi, [gl_program]
@@ -540,18 +539,17 @@ compile_shader_success:
     ret
 
 ;===========================================================
-section .data
+section '.data' writable align 64
 ;===========================================================
 
-align 64
-msglen equ 4096
+msglen  = 4096
 msg             db 'msg error', 10, 0
 window_name     db 'Empedocles Renderer', 10, 0
 debug_msg       db 'cam %f, %f, %f', 10, 0
 img_header      db 'P3', 10, '270 480', 10, '255', 10, 0
 img_line        db '%hhu %hhu %hhu', 10, 0
 
-%include 'generation/generated_data.asm'
+include 'generation/generated_data.asm'
 
 vert_src_ptr    dq vert_src
 frag_src_ptr    dq frag_src
@@ -573,20 +571,25 @@ v4_pixels_w     dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
 v4_pixels_h     dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
 
 ;===========================================================
-section .bss
+section '.bss' align 64
 ;===========================================================
 
-regions_started     resd 1
-regions_completed   resd 1
-program_terminated  resb 1
+virtual at 0
+    Thread Thread ?
+    Thread.size = $ - Thread
+end virtual
 
-alignb 64
-thread_memory_array resb Thread_size * THREAD_COUNT
+regions_started     rd 1
+regions_completed   rd 1
+program_terminated  rb 1
 
-alignb 64
-pixels              resb PIXEL_BUFFER_SIZE
+align 64
+pixels              rb PIXEL_BUFFER_SIZE
 
-glfw_window         resq 1
-gl_texture          resd 1
-gl_vao              resd 1
-gl_program          resd 1
+align 64
+thread_memory_array rb Thread.size * THREAD_COUNT
+
+glfw_window         rq 1
+gl_texture          rd 1
+gl_vao              rd 1
+gl_program          rd 1

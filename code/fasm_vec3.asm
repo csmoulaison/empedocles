@@ -13,10 +13,10 @@
 ;   v: normalized
 ; volatile:
 ;   xmm1-xmm2
-%macro v3norm 1
+macro v3norm v {
     local is_zero
     local end
-    movaps  xmm1, %1            ; v and xmm1 both have vector
+    movaps  xmm1, v             ; v and xmm1 both have vector
     dpps    xmm1, xmm1, 01110001b ; xmm1 has dot product
     rsqrtss xmm1, xmm1          ; xmm1 has reciprocal square root
     pxor    xmm2, xmm2
@@ -24,12 +24,12 @@
     je      is_zero
 
     shufps  xmm1, xmm1, 0
-    mulps   %1, xmm1
+    mulps   v, xmm1
     jmp end
 is_zero:
-    movaps  %1, xmm2             ; xmm1 should be zero here
+    movaps  v, xmm2             ; xmm1 should be zero here
 end:
-%endmacro
+}
 
 ;===========================================================
 ; Cross product from here (Method 3):
@@ -50,15 +50,33 @@ end:
 ;   a: cross product
 ; volatile:
 ;   xmm0-xmm3
-%macro v3cross 2
+macro v3cross a, b {
     ; Method 3
-    movaps  xmm2, %2
+    movaps  xmm2, b
     shufps  xmm2, xmm2, 11001001b   ; xmm2 is tmp0
-    movaps  xmm3, %1
+    movaps  xmm3, a
     shufps  xmm3, xmm3, 11001001b   ; xmm3 is tmp1
-    mulps   xmm2, %1
-    mulps   xmm3, %2
+    mulps   xmm2, a
+    mulps   xmm3, b
     subps   xmm2, xmm3              ; xmm2 is tmp2
     shufps  xmm2, xmm2, 11001001b   ; xmm2 is cross product
-    movaps  %1, xmm2                 ; a has cross product
-%endmacro
+    movaps  a, xmm2                 ; a has cross product
+
+    ; Method 5: reportedly faster but I made a mistake
+    ; somewhere and don't care to fix it
+   
+    ;shufps  a, a, 11001001b   ; a is tmp0, no more upvector
+    ;                                ; 3, 0, 2, 1
+    ;movaps  xmm2, b              ; xmm2 is vec1 (basis w)
+    ;shufps  xmm2, xmm2, 11010010b   ; xmm2 is tmp1
+    ;                                ; 3, 1, 0, 2
+    ;movaps  xmm3, a              ; xmm3 is tmp0
+    ;mulps   xmm3, xmm2              ; xmm3 is tmp2
+    ;mulps   a, xmm2              ; a is tmp3
+    ;movaps  xmm4, xmm3              ; xmm4 is tmp2
+    ;shufps  xmm4, xmm4, 11001001b   ; xmm4 is tmp4
+    ;                                ; 3, 0, 2, 1
+    ;subps   a, xmm4              ; a is cross(upvector, basis_w)
+}
+
+

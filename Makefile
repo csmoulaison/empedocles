@@ -29,7 +29,7 @@ profile: bin/empedocles
 
 # Leafier targets
 build/main.o: code/main.asm $(INCLUDED) $(GEN_DIR)/generated_data.asm
-	fasm -s out.debug code/main.asm build/main.o -m 1000000
+	nasm code/main.asm -o build/main.o -f elf64 -i code/ -g -F dwarf
 
 $(GEN_DIR)/generated_data.asm: $(SHADERS) $(GEN_DIR)/generate
 	$(GEN_DIR)/generate
