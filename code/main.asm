@@ -1,12 +1,12 @@
-DEFAULT ABS
+default rel
 
 %include 'vec3.asm'
 %include 'rand.asm'
 
 ;= Configuration Symbols ===================================
-THREAD_COUNT            equ 2
-SAMPLE_COUNT            equ 4
-%define FSAMPLE_COUNT       4.0
+THREAD_COUNT            equ 8
+SAMPLE_COUNT            equ 8
+%define FSAMPLE_COUNT       8.0
 BOUNCE_COUNT            equ 32
 CUBES_COUNT             equ 1
 
@@ -16,7 +16,7 @@ PIXELS_H                equ 256
 %define FPIXELS_H           256.0
 PIXELS_COUNT            equ PIXELS_W * PIXELS_H
 PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
-REGION_STRIDE           equ PIXELS_COUNT / 4
+REGION_STRIDE           equ PIXELS_W
 REGIONS_COUNT           equ PIXELS_COUNT / REGION_STRIDE
 
 OUTPUT_FRAMES_TO_FILE   equ 0
@@ -32,14 +32,15 @@ CLONE_FLAGS             equ CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | 
 
 ;= Structs =================================================
 struc Thread
-    .color_sum      resq 1
-    .pid            resd 1
+    .color_sum      resq 2
+    .host            resd 1
     .seed           resd 1
     .current_pixel  resd 1
     .end_pixel      resd 1
     .sample_index   resb 1
     .bounce_index   resb 1
     .object_index   resb 1
+    alignb 64
 endstruc
 
 ;= External Functions ======================================
@@ -85,6 +86,59 @@ extern glUseProgram
 extern glDrawArrays
 
 ;===========================================================
+section .data align=64
+;===========================================================
+
+align 64
+msglen equ 4096
+msg             db 'msg error', 10, 0
+window_name     db 'Empedocles Renderer', 10, 0
+debug_msg       db 'cam %f, %f, %f', 10, 0
+img_header      db 'P3', 10, '270 480', 10, '255', 10, 0
+img_line        db '%hhu %hhu %hhu', 10, 0
+
+%include 'generation/generated_data.asm'
+
+vert_src_ptr    dq vert_src
+frag_src_ptr    dq frag_src
+verts           dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
+verts_len       dd 12
+
+align 64
+pixels_w        dd PIXELS_W
+
+align 64
+v4_zero         dd 0.0, 0.0, 0.0, 0.0
+v4_half         dd 0.5, 0.5, 0.5, 0.0
+v4_one          dd 1.0, 1.0, 1.0, 0.0
+v4_red          dd 1.0, 0.0, 0.0, 0.0
+v4_green        dd 0.0, 1.0, 0.0, 0.0
+v4_blue         dd 0.0, 0.0, 1.0, 0.0
+v4_255          dd 255.0, 255.0, 255.0, 0.0
+v4_sample_count dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
+v4_pixels_w     dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
+v4_pixels_h     dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
+
+;===========================================================
+section .bss align=64
+;===========================================================
+
+regions_started     resd 1
+regions_completed   resd 1
+host_terminated  resb 1
+
+alignb 64
+thread_memory_array resb Thread_size * THREAD_COUNT
+
+alignb 64
+pixels              resb PIXEL_BUFFER_SIZE * 2
+
+glfw_window         resq 1
+gl_texture          resd 1
+gl_vao              resd 1
+gl_program          resd 1
+
+;===========================================================
 section .text
 ;===========================================================
 
@@ -93,7 +147,7 @@ __dso_handle:
     dd 0
 
 exit_host:
-    mov     [program_terminated], 1
+    mov     [host_terminated], 1
     call    glfwTerminate
 exit:
     mov     rax, 60                 ; exit
@@ -158,11 +212,11 @@ _start:
 
     mov     edx, 0x812F             ; GL_CLAMP_TO_EDGE
     mov     esi, 0x2802             ; GL_TEXTURE_WRAP_S
-    mov     edi, 0x0DE1             ; 0x0DE1 ; GL_TEXTURE_2D
+    mov     edi, 0x0DE1             ; GL_TEXTURE_2D
     call    glTexParameteri
     mov     edx, 0x812F             ; GL_CLAMP_TO_EDGE
     mov     esi, 0x2803             ; GL_TEXTURE_WRAP_T
-    mov     edi, 0x0DE1             ; 0x0DE1 ; GL_TEXTURE_2D
+    mov     edi, 0x0DE1             ; GL_TEXTURE_2D
     call    glTexParameteri
     mov     edx, 0x2600             ; GL_NEAREST
     mov     esi, 0x2801             ; GL_TEXTURE_MIN_FILTER
@@ -238,12 +292,12 @@ _start:
 ; A number of threads are spawned and each given their own
 ; instance of a thread-local structure.
 ;===========================================================
-    mov     [regions_completed], 0
-    mov     [regions_started], REGIONS_COUNT ; otherwise the threads
-                                             ; will start before the
-                                             ; first frame is ready.
+    mov     dword [regions_completed], 0
+    mov     dword [regions_started], REGIONS_COUNT ; otherwise the threads
+                                                   ; will start before the
+                                                   ; first frame is ready.
     lea     r15, [thread_memory_array] ; Define base values for host thread
-    mov     [r15+Thread.pid], 0        ; pid = 0 for host thread
+    mov     dword [r15+Thread.host], 1 ; host = 1 for host thread
 %if THREAD_COUNT > 1
     %assign i 1
     %rep THREAD_COUNT-1
@@ -252,14 +306,14 @@ _start:
         mov     rdi, CLONE_FLAGS    ; flags
         lea     rsi, [thread_memory_array + Thread_size * i] ; child stack pointer
         mov     rdx, 0              ; parent thread id
-        mov     r10, i              ; child thread id
+        mov     r10, 0              ; child thread id
         mov     r8, 0               ; child thread local storage
         syscall
-        cmp     rax, 0
+        cmp     rax, 0              ; 0 if we are child
         jl      exit_host           ; error creating thread
-        je      %$end_thread_creation
+        jne     %$end_thread_creation ; host skips to the next thread creation
         mov     r15, rsp            ; store thread memory ptr in r15
-        mov     [r15+Thread.pid], eax ; store pid
+        mov     [r15+Thread.host], 0 ; store the fact that we aren't the host
         jmp     thread_idle         ; child threads jump straight to idle and
                                     ; wait for work...
         %$end_thread_creation:
@@ -287,8 +341,8 @@ _start:
 ; process.
 ;===========================================================
 thread_idle:
-    cmp     [program_terminated], 1 ; the host tips off the children to exit
-    je      exit                    ; with program_terminated
+    cmp     [host_terminated], 1    ; host tips off the children to exit
+    je      exit
     mov     eax, 1
     lock    xadd [regions_started], eax ; iterate regions_started, storing the
                                         ; last region index in eax
@@ -302,12 +356,12 @@ thread_idle:
     mov     [r15+Thread.end_pixel], eax
     jmp     render_region
 all_regions_started:
-    cmp     [r15+Thread.pid], 0
-    jne     thread_idle             ; child threads keep patiently waiting
+    cmp     [r15+Thread.host], 0    ; 0 if we are child
+    je      thread_idle             ; child threads keep patiently waiting
 check_regions_complete:
-    cmp     [regions_completed], REGIONS_COUNT ; the host thread instead wants to
-    jge     end_frame                          ; know if all the regions are
-    jmp     thread_idle                        ; complete so it can end the frame
+    cmp     dword [regions_completed], REGIONS_COUNT ; the host thread instead wants to
+    jge     end_frame                                ; know if all the regions are
+    jmp     thread_idle                              ; complete so it can end the frame
 
 ;= Start Frame =============================================
 ; The host executes this before every frame is rendered
@@ -340,7 +394,6 @@ start_frame:
     ;mov    [regions_completed], 0  ; if it's faster or slower
     jmp     thread_idle             ; Back to thread_idle to work on rendering
 
-
 ;= Render Region ===========================================
 ; Threads execute this repeatedly until all regions have
 ; been started. It runs in nested loops of the following
@@ -368,21 +421,22 @@ start_frame:
 ;===========================================================
 render_region:
 pixel_start:
-    mov     [r15+Thread.sample_index], 0
+    mov     byte [r15+Thread.sample_index], 0
     pxor    xmm0, xmm0
     movaps  [r15+Thread.color_sum], xmm0
 sample_start:
     xor     rax, rax
+    xor     rdx, rdx
     mov     eax, [r15+Thread.current_pixel]
     div     dword [pixels_w]
     cvtsi2ss xmm0, edx              ; x (i % w)
     cvtsi2ss xmm1, eax              ; y (i / w)
 
     ; For now, we are rendering a gradient
-    divps   xmm0, [v4_pixels_w]
-    divps   xmm1, [v4_pixels_w]
     shufps  xmm0, xmm0, 0
     shufps  xmm1, xmm1, 0
+    divps   xmm0, [v4_pixels_w]
+    divps   xmm1, [v4_pixels_h]
     mulps   xmm0, [v4_red]
     mulps   xmm1, [v4_green]
     addps   xmm0, xmm1
@@ -390,8 +444,8 @@ sample_start:
     addps   xmm0, xmm1
     movaps  [r15+Thread.color_sum], xmm0
 
-    inc     [r15+Thread.sample_index]
-    cmp     [r15+Thread.sample_index], SAMPLE_COUNT
+    inc     byte [r15+Thread.sample_index]
+    cmp     byte [r15+Thread.sample_index], SAMPLE_COUNT
     jl      sample_start
 
 write_to_pixel:
@@ -405,9 +459,9 @@ write_to_pixel:
     mov     r8d, [r15+Thread.current_pixel]
     movd    dword [pixels+r8d*4], xmm0 ; move to pixel location
 
-    inc     [r15+Thread.current_pixel]
+    inc     dword [r15+Thread.current_pixel]
     mov     r8d, [r15+Thread.end_pixel]
-    cmp     [r15+Thread.current_pixel], r8d
+    cmp     dword [r15+Thread.current_pixel], r8d
     jl      pixel_start
 
     ; Return to thread idle to wait for more work
@@ -539,54 +593,3 @@ compile_shader_success:
     add     rsp, 40
     ret
 
-;===========================================================
-section .data
-;===========================================================
-
-align 64
-msglen equ 4096
-msg             db 'msg error', 10, 0
-window_name     db 'Empedocles Renderer', 10, 0
-debug_msg       db 'cam %f, %f, %f', 10, 0
-img_header      db 'P3', 10, '270 480', 10, '255', 10, 0
-img_line        db '%hhu %hhu %hhu', 10, 0
-
-%include 'generation/generated_data.asm'
-
-vert_src_ptr    dq vert_src
-frag_src_ptr    dq frag_src
-verts           dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
-verts_len       dd 12
-
-align 64
-pixels_w        dd PIXELS_W
-
-align 64
-v4_zero         dd 0.0, 0.0, 0.0, 0.0
-v4_one          dd 1.0, 1.0, 1.0, 0.0
-v4_red          dd 1.0, 0.0, 0.0, 1.0
-v4_green        dd 0.0, 1.0, 0.0, 1.0
-v4_blue         dd 0.0, 0.0, 1.0, 1.0
-v4_255          dd 255.0, 255.0, 255.0, 0.0
-v4_sample_count dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
-v4_pixels_w     dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
-v4_pixels_h     dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
-
-;===========================================================
-section .bss
-;===========================================================
-
-regions_started     resd 1
-regions_completed   resd 1
-program_terminated  resb 1
-
-alignb 64
-thread_memory_array resb Thread_size * THREAD_COUNT
-
-alignb 64
-pixels              resb PIXEL_BUFFER_SIZE
-
-glfw_window         resq 1
-gl_texture          resd 1
-gl_vao              resd 1
-gl_program          resd 1
