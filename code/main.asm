@@ -4,7 +4,7 @@ default rel
 %include 'rand.asm'
 
 ;= Configuration Symbols ===================================
-THREAD_COUNT            equ 8
+THREAD_COUNT            equ 6
 SAMPLE_COUNT            equ 8
 %define FSAMPLE_COUNT       8.0
 BOUNCE_COUNT            equ 32
@@ -33,7 +33,7 @@ CLONE_FLAGS             equ CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | 
 ;= Structs =================================================
 struc Thread
     .color_sum      resq 2
-    .host            resd 1
+    .host           resd 1
     .seed           resd 1
     .current_pixel  resd 1
     .end_pixel      resd 1
@@ -91,33 +91,50 @@ section .data align=64
 
 align 64
 msglen equ 4096
-msg             db 'msg error', 10, 0
-window_name     db 'Empedocles Renderer', 10, 0
-debug_msg       db 'cam %f, %f, %f', 10, 0
-img_header      db 'P3', 10, '270 480', 10, '255', 10, 0
-img_line        db '%hhu %hhu %hhu', 10, 0
+msg                 db 'msg error', 10, 0
+window_name         db 'Empedocles Renderer', 10, 0
+debug_msg           db 'cam %f, %f, %f', 10, 0
+img_header          db 'P3', 10, '270 480', 10, '255', 10, 0
+img_line            db '%hhu %hhu %hhu', 10, 0
 
 %include 'generation/generated_data.asm'
 
-vert_src_ptr    dq vert_src
-frag_src_ptr    dq frag_src
-verts           dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
-verts_len       dd 12
+vert_src_ptr        dq vert_src
+frag_src_ptr        dq frag_src
+verts               dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0
+verts_len           dd 12
 
 align 64
-pixels_w        dd PIXELS_W
+cam_phi             dd 1.1
+cam_theta           dd 1.1
+cam_phi_per_sec     dd 0.0
+cam_theta_per_sec   dd 0.01
+cam_distance        dd 2.0
 
 align 64
-v4_zero         dd 0.0, 0.0, 0.0, 0.0
-v4_half         dd 0.5, 0.5, 0.5, 0.0
-v4_one          dd 1.0, 1.0, 1.0, 0.0
-v4_red          dd 1.0, 0.0, 0.0, 0.0
-v4_green        dd 0.0, 1.0, 0.0, 0.0
-v4_blue         dd 0.0, 0.0, 1.0, 0.0
-v4_255          dd 255.0, 255.0, 255.0, 0.0
-v4_sample_count dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
-v4_pixels_w     dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
-v4_pixels_h     dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
+pixels_w            dd PIXELS_W
+
+align 64
+v4_look_from        resd 4
+v4_viewport_origin  resd 4
+v4_pixel_delta_x    resd 4
+v4_pixel_delta_y    resd 4
+
+align 64
+v4_zero             dd 0.0, 0.0, 0.0, 0.0
+v4_half             dd 0.5, 0.5, 0.5, 0.0
+v4_one              dd 1.0, 1.0, 1.0, 0.0
+v4_red              dd 1.0, 0.0, 0.0, 0.0
+v4_green            dd 0.0, 1.0, 0.0, 0.0
+v4_blue             dd 0.0, 0.0, 1.0, 0.0
+v4_255              dd 255.0, 255.0, 255.0, 0.0
+v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
+v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
+v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
+v4_up               dd 0.0, 1.0, 0.0, 0.0
+v4_viewport_w       dd 2.0, 2.0, 2.0, 0.0
+v4_viewport_nh      dd -2.0, -2.0, -2.0, 0.0
+v4_focal_len        dd 1.0, 1.0, 1.0, 0.0
 
 ;===========================================================
 section .bss align=64
@@ -336,8 +353,8 @@ _start:
 ; next round of work.
 ;
 ; If there are still regions to render, the thread instead
-; jumps to render_region, where it performs its work,
-; iterating regions_started and regions_complete in the
+; jumps to render region, where it performs its work,
+; iterating regions started and regions complete in the
 ; process.
 ;===========================================================
 thread_idle:
@@ -370,8 +387,8 @@ check_regions_complete:
 ;   camera orientation
 ; * Calculate info which is needed for rendering and
 ;   invariant between regions, such as viewport geometry
-; * Notify threads to start work by setting regions_started
-;   and regions_complete to 0
+; * Notify threads to start work by setting regions started
+;   and regions complete to 0
 ;===========================================================
 start_frame:
     mov     rdi, [glfw_window]      ; If GLFW has recieved a close request, we
@@ -379,12 +396,110 @@ start_frame:
     cmp     eax, 1
     je      exit_host
 
-%if OUTPUT_FRAMES_TO_FILE            ; For rendering ppm frames
+%if OUTPUT_FRAMES_TO_FILE           ; For rendering ppm frames
     mov     rdi, img_header
     call    printf
 %endif
 
-    ; TODO: update logical camera, calculate viewport values
+    ; Update camera rotation (theta and phi), and find the
+    ; position (look from) with the following:
+    ;   x = distance * sin(phi) * cos(theta)
+    ;   y = distance * cos(phi)
+    ;   z = distance * sin(phi) * sin(theta)
+    movss   xmm0, xmm1
+    addss   xmm0, [cam_phi_per_sec]
+    movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
+    movss   xmm0, [cam_theta]       
+    addss   xmm0, [cam_theta_per_sec]
+    movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
+
+    movss   xmm1, [cam_theta]       ; We will be loading from phi and
+    movss   xmm2, [cam_phi]         ; theta repeatedly, so we give them
+                                    ; their own registers in xmm1 and xmm2
+
+    call    cosf                    ; cos(theta), assuming xmm0 is theta
+    movss   xmm3, xmm0              ; in xmm3
+    movss   xmm0, xmm1
+    call    sinf                    ; sin(theta)
+    movss   xmm4, xmm0              ; in xmm4
+    movss   xmm0, xmm2
+    call    cosf                    ; cos(phi)
+    movss   xmm5, xmm0              ; in xmm5
+    movss   xmm0, xmm2
+    call    sinf                    ; sin(phi)
+    movss   xmm6, xmm0              ; in xmm6
+
+    movss   xmm7, [cam_distance]    ; We store cam distance in
+    movss   xmm0, xmm7              ;   xmm0, xmm1, and xmm2.
+    movss   xmm1, xmm7              ; We will operate on them in place to get
+    movss   xmm2, xmm7              ;   camera x, y, and z
+
+    pxor    xmm0, xmm0              ; xmm0 will eventually be the packed
+                                    ; position, and we want the last lane
+                                    ; to end up being 0.0
+
+    mulss   xmm0, xmm6              ; x = distance * sin(phi)
+    mulss   xmm0, xmm3              ;   * cos(theta)
+    mulss   xmm1, xmm5              ; y = distance * cos(phi)
+    mulss   xmm2, xmm6              ; z = distance * sin(phi)
+    mulss   xmm2, xmm4              ;   * sin(theta)
+
+    insertps xmm0, xmm1, 0x10       ; Move y to lane 1
+    insertps xmm0, xmm2, 0x20       ;  and z to lane 2
+                                    ; Now xmm0 is our "look from" position
+
+    ; Having calculated the camera position, we now find
+    ; three more key vectors. The first is the position of
+    ; the top left corner of the viewport in world space.
+    ; The other two are the u and v deltas between pixels
+    ; in the viewport.
+    ;
+    ; Along the way, we calculate the camera basis vectors:
+    ;   x = normalize(up X z), (where X is cross product)
+    ;   y = z X x
+    ;   z = normalize(look_from - look_at), (camera will look down -z)
+    ; We calculate basis z, then x, they y
+    movaps  xmm3, xmm0              ; basis z = look from
+    v3norm  xmm3, xmm14, xmm15      ;   normalized
+                                    ; We ignore look_at, since it's implicitly
+                                    ; placed at the origin in our world.
+
+    movaps  xmm1, [v4_up]           ; basis x = up
+    movaps  xmm4, xmm3              ;           X
+    v3cross xmm1, xmm4, xmm5, xmm6  ;           z
+    v3norm  xmm1, xmm5, xmm6        ;   normalized
+
+    movaps  xmm2, xmm3              ; basis y = z
+    movaps  xmm4, xmm1              ;           X
+    v3cross xmm2, xmm4, xmm5, xmm6  ;           x
+                                    ; Now xmm 1,2,3 are basis x,y,z
+
+    mulps   xmm1, [v4_viewport_w]   ; We multiply the basis vectors by the world
+    mulps   xmm2, [v4_viewport_nh]  ; space viewport dimensions to get the vectors
+                                    ; which span the world space viewport.
+                                    ; The height is negative because y coordinates
+                                    ; are flipped by convention.
+
+    movaps  xmm4, xmm1              ; The pixel delta vectors are the same as
+    divps   xmm4, [v4_pixels_w]     ; the viewport span vectors, but divided by
+    movaps  xmm5, xmm2              ; the render pixel dimensions.
+    divps   xmm5, [v4_pixels_h]     ; Now xmm 4,5 are pixel delta x,y
+
+    ; We now calculate the viewport origin in world space.
+    movaps  xmm6, [v4_focal_len]    ; We extend the camera basis z by a focal
+    mulps   xmm6, xmm1              ; length and subtract the look from position
+    subps   xmm6, xmm0              ; to get our point along the camera z basis.
+
+    movaps  xmm7, [v4_half]         ; Then, we offset our position by half the
+    mulps   xmm1, xmm7              ; distance of our viewport span vectors.
+    mulps   xmm2, xmm7              
+    subps   xmm6, xmm1              
+    subps   xmm6, xmm2              ; Now xmm6 is our viewport origin.
+
+    movaps  [v4_look_from], xmm0       ; Store these values into global memory
+    movaps  [v4_viewport_origin], xmm6 ; for use during rendering.
+    movaps  [v4_pixel_delta_x], xmm4   
+    movaps  [v4_pixel_delta_y], xmm5   ; Hip, hip, hooray!
 
     xor     eax, eax                ; Reset region counters to start next frame
     xchg    [regions_completed], eax
@@ -392,18 +507,18 @@ start_frame:
     xchg    [regions_started], eax
     ;mov    [regions_started], 0    ; Alternate way, want to profile to see
     ;mov    [regions_completed], 0  ; if it's faster or slower
-    jmp     thread_idle             ; Back to thread_idle to work on rendering
+    jmp     thread_idle             ; Back to thread idle to work on rendering
 
 ;= Render Region ===========================================
 ; Threads execute this repeatedly until all regions have
 ; been started. It runs in nested loops of the following
 ; structure:
 ;
-;   pixel_start: for each pixel {
-;       sample_start: for each sample {
+;   pixel start: for each pixel {
+;       sample start: for each sample {
 ;           calculate ray direction from camera
-;           ray_start: for each bounce {
-;               intersection_start: for each object {
+;           ray start: for each bounce {
+;               intersection start: for each object {
 ;                   check intersection and track closest hit
 ;               }
 ;               if hit, get normal and calculate new ray
@@ -474,7 +589,7 @@ write_to_pixel:
 ;
 ; We push our pixels to the OpenGL texture, update our
 ; viewport, draw the texture across the screen, then jump
-; back to start_frame.
+; back to start frame.
 ;===========================================================
 end_frame:
     push    0

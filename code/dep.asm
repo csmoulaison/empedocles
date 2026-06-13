@@ -905,7 +905,7 @@ end if
     subps   xmm10, xmm1         ; xmm0: from - to
     v3norm  xmm10               ; xmm10: basis w
 
-    movaps  xmm8, dqword [v4_upvector] ; xmm0: upvector
+    movaps  xmm8, dqword [v4_upvector] ; xmm8: upvector
     movaps  xmm1, xmm10         ; xmm1: basis w
     v3cross xmm8, xmm1
     v3norm  xmm8                ; xmm8: basis u
