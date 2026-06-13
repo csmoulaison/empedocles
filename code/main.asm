@@ -4,9 +4,9 @@ default rel
 %include 'rand.asm'
 
 ;= Configuration Symbols ===================================
-THREAD_COUNT            equ 6
-SAMPLE_COUNT            equ 8
-%define FSAMPLE_COUNT       8.0
+THREAD_COUNT            equ 1
+SAMPLE_COUNT            equ 1
+%define FSAMPLE_COUNT       1.0
 BOUNCE_COUNT            equ 32
 CUBES_COUNT             equ 1
 
@@ -105,20 +105,14 @@ verts               dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1
 verts_len           dd 12
 
 align 64
-cam_phi             dd 1.1
-cam_theta           dd 1.1
+cam_phi             dd 1.7
+cam_theta           dd -1.1
 cam_phi_per_sec     dd 0.0
 cam_theta_per_sec   dd 0.01
 cam_distance        dd 2.0
 
 align 64
 pixels_w            dd PIXELS_W
-
-align 64
-v4_look_from        resd 4
-v4_viewport_origin  resd 4
-v4_pixel_delta_x    resd 4
-v4_pixel_delta_y    resd 4
 
 align 64
 v4_zero             dd 0.0, 0.0, 0.0, 0.0
@@ -149,6 +143,18 @@ thread_memory_array resb Thread_size * THREAD_COUNT
 
 alignb 64
 pixels              resb PIXEL_BUFFER_SIZE * 2
+
+align 64
+v4_look_from        resd 4
+v4_viewport_origin  resd 4
+v4_pixel_delta_x    resd 4
+v4_pixel_delta_y    resd 4
+
+align 64
+cos_theta           resd 1
+sin_theta           resd 1
+cos_phi             resd 1
+sin_phi             resd 1
 
 glfw_window         resq 1
 gl_texture          resd 1
@@ -413,21 +419,18 @@ start_frame:
     addss   xmm0, [cam_theta_per_sec]
     movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
 
-    movss   xmm1, [cam_theta]       ; We will be loading from phi and
-    movss   xmm2, [cam_phi]         ; theta repeatedly, so we give them
-                                    ; their own registers in xmm1 and xmm2
-
-    call    cosf                    ; cos(theta), assuming xmm0 is theta
-    movss   xmm3, xmm0              ; in xmm3
-    movss   xmm0, xmm1
+    movss   xmm0, [cam_theta]
+    call    cosf                    ; cos(theta)
+    movss   [cos_theta], xmm0
+    movss   xmm0, [cam_theta]
     call    sinf                    ; sin(theta)
-    movss   xmm4, xmm0              ; in xmm4
-    movss   xmm0, xmm2
+    movss   [sin_theta], xmm0 
+    movss   xmm0, [cam_phi]
     call    cosf                    ; cos(phi)
-    movss   xmm5, xmm0              ; in xmm5
-    movss   xmm0, xmm2
+    movss   [cos_phi], xmm0
+    movss   xmm0, [cam_phi]
     call    sinf                    ; sin(phi)
-    movss   xmm6, xmm0              ; in xmm6
+    movss   [sin_phi], xmm0
 
     movss   xmm7, [cam_distance]    ; We store cam distance in
     movss   xmm0, xmm7              ;   xmm0, xmm1, and xmm2.
@@ -438,11 +441,18 @@ start_frame:
                                     ; position, and we want the last lane
                                     ; to end up being 0.0
 
-    mulss   xmm0, xmm6              ; x = distance * sin(phi)
-    mulss   xmm0, xmm3              ;   * cos(theta)
-    mulss   xmm1, xmm5              ; y = distance * cos(phi)
-    mulss   xmm2, xmm6              ; z = distance * sin(phi)
-    mulss   xmm2, xmm4              ;   * sin(theta)
+    mulss   xmm0, [sin_phi]              ; x = distance * sin(phi)
+    mulss   xmm0, [cos_theta]              ;   * cos(theta)
+    mulss   xmm1, [cos_phi]              ; y = distance * cos(phi)
+    mulss   xmm2, [sin_phi]              ; z = distance * sin(phi)
+    mulss   xmm2, [sin_theta]              ;   * sin(theta)
+
+    mov     rax, 3
+    cvtss2sd xmm2, xmm2
+    cvtss2sd xmm1, xmm1
+    cvtss2sd xmm0, xmm0
+    mov     rdi, debug_msg
+    call    printf
 
     insertps xmm0, xmm1, 0x10       ; Move y to lane 1
     insertps xmm0, xmm2, 0x20       ;  and z to lane 2
@@ -535,26 +545,49 @@ start_frame:
 ; more work.
 ;===========================================================
 render_region:
+
 pixel_start:
-    mov     byte [r15+Thread.sample_index], 0
-    pxor    xmm0, xmm0
+    mov     byte [r15+Thread.sample_index], 0 ; Zero the sample index
+    pxor    xmm0, xmm0                        ; and color sum.
     movaps  [r15+Thread.color_sum], xmm0
+
 sample_start:
-    xor     rax, rax
-    xor     rdx, rdx
+    xor     rax, rax                ; Calculate the x and y coordinates
+    xor     rdx, rdx                ; from the current pixel index.
     mov     eax, [r15+Thread.current_pixel]
     div     dword [pixels_w]
-    cvtsi2ss xmm0, edx              ; x (i % w)
-    cvtsi2ss xmm1, eax              ; y (i / w)
-
-    ; For now, we are rendering a gradient
+    cvtsi2ss xmm0, edx              ; x = i % w
+    cvtsi2ss xmm1, eax              ; y = i / w
+    frand_unsigned xmm3             ; Get a random position between x and x+1
+    frand_unsigned xmm4             ; and the same for y.
+    addss   xmm0, xmm3              ; We will use these to index our viewport
+    addss   xmm1, xmm4              ; position for a random sample ray.
     shufps  xmm0, xmm0, 0
     shufps  xmm1, xmm1, 0
-    divps   xmm0, [v4_pixels_w]
-    divps   xmm1, [v4_pixels_h]
-    mulps   xmm0, [v4_red]
-    mulps   xmm1, [v4_green]
-    addps   xmm0, xmm1
+
+    mulps   xmm0, [v4_pixel_delta_x]   ; We scale the deltas by x and y and add
+    mulps   xmm1, [v4_pixel_delta_y]   ; them together along with the viewport
+    addps   xmm0, xmm1                 ; origin, giving us the corresponding
+    addps   xmm0, [v4_viewport_origin] ; position on the viewport.
+    subps   xmm0, [v4_look_from]       ; Subtracting the look from position
+                                       ; gives us a ray direction through the
+                                       ; viewport point.
+
+    ; For now, we are rendering a gradient
+    ;shufps  xmm0, xmm0, 0
+    ;shufps  xmm1, xmm1, 0
+    ;divps   xmm0, [v4_pixels_w]
+    ;divps   xmm1, [v4_pixels_h]
+    ;mulps   xmm0, [v4_red]
+    ;mulps   xmm1, [v4_green]
+    ;addps   xmm0, xmm1
+    ;movaps  xmm1, [r15+Thread.color_sum]
+    ;addps   xmm0, xmm1
+    ;movaps  [r15+Thread.color_sum], xmm0
+
+calculate_sample_color:
+    v3norm  xmm0, xmm3, xmm4
+    maxps   xmm0, [v4_zero]
     movaps  xmm1, [r15+Thread.color_sum]
     addps   xmm0, xmm1
     movaps  [r15+Thread.color_sum], xmm0

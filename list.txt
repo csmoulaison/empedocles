@@ -66,25 +66,25 @@
      5                              <1> ;   ires = ((((unsigned int)*seed)>>9 ) | 0x3f800000);
      6                              <1> ;   return fres - 1.0f;
      7                              <1> %macro frand_unsigned 1
-     8                              <1>     mov     ebp, r14d
+     8                              <1>     mov     ebp, [r15+Thread.seed]
      9                              <1>     mov     eax, 0x000343FD
-    10                              <1>     imul    ebp                 ; eax: seed * 0x000343FD
-    11                              <1>     add     eax, 0x00269EC3     ; eax: 0x000269EC3 + seed * 0x000343FD
-    12                              <1>     mov     r14d, eax    ; store seed result
+    10                              <1>     imul    ebp                     ; eax: seed * 0x000343FD
+    11                              <1>     add     eax, 0x00269EC3         ; eax: 0x000269EC3 + seed * 0x000343FD
+    12                              <1>     mov     [r15+Thread.seed], eax               ; store seed result
     13                              <1>     shr     eax, 9
-    14                              <1>     or      eax, 0x3F800000     ; eax: ((uint)seed)>>9 | 0x3F800000
+    14                              <1>     or      eax, 0x3F800000         ; eax: ((uint)seed)>>9 | 0x3F800000
     15                              <1>     movd    %1, eax
     16                              <1>     subss   %1, [v4_one]
     17                              <1> %endmacro
     18                              <1> 
     19                              <1> %macro frand_signed 1
-    20                              <1>     mov     ebp, r14d
+    20                              <1>     mov     ebp, [r15+Thread.seed]
     21                              <1>     mov     eax, 0x000343FD
-    22                              <1>     imul    ebp                 ; eax: seed * 0x000343FD
-    23                              <1>     add     eax, 0x00269EC3     ; eax: 0x000269EC3 + seed * 0x000343FD
-    24                              <1>     mov     r14d, eax    ; store seed result
+    22                              <1>     imul    ebp                     ; eax: seed * 0x000343FD
+    23                              <1>     add     eax, 0x00269EC3         ; eax: 0x000269EC3 + seed * 0x000343FD
+    24                              <1>     mov     [r15+Thread.seed], eax               ; store seed result
     25                              <1>     shr     eax, 9
-    26                              <1>     or      eax, 0x40000000     ; eax: ((uint)seed)>>9 | 0x40000000
+    26                              <1>     or      eax, 0x40000000         ; eax: ((uint)seed)>>9 | 0x40000000
     27                              <1>     movd    %1, eax
     28                              <1>     subss   %1, [v4_three]
     29                              <1> %endmacro
@@ -102,9 +102,9 @@
     41                              <1> %endmacro
      5                                  
      6                                  ;= Configuration Symbols ===================================
-     7                                  THREAD_COUNT            equ 6
-     8                                  SAMPLE_COUNT            equ 8
-     9                                  %define FSAMPLE_COUNT       8.0
+     7                                  THREAD_COUNT            equ 1
+     8                                  SAMPLE_COUNT            equ 1
+     9                                  %define FSAMPLE_COUNT       1.0
     10                                  BOUNCE_COUNT            equ 32
     11                                  CUBES_COUNT             equ 1
     12                                  
@@ -264,8 +264,8 @@
    105 00000243 0C000000                verts_len           dd 12
    106                                  
    107 00000247 90<rep 39h>             align 64
-   108 00000280 CDCC8C3F                cam_phi             dd 1.1
-   109 00000284 CDCC8C3F                cam_theta           dd 1.1
+   108 00000280 9A99D93F                cam_phi             dd 1.7
+   109 00000284 CDCC8CBF                cam_theta           dd -1.1
    110 00000288 00000000                cam_phi_per_sec     dd 0.0
    111 0000028C 0AD7233C                cam_theta_per_sec   dd 0.01
    112 00000290 00000040                cam_distance        dd 2.0
@@ -274,767 +274,738 @@
    115 000002C0 00010000                pixels_w            dd PIXELS_W
    116                                  
    117 000002C4 90<rep 3Ch>             align 64
-   118 00000300 <res 10h>               v4_look_from        resd 4
-   118          ******************       warning: uninitialized space declared in non-BSS section `.data': zeroing [-w+zeroing]
-   119 00000310 <res 10h>               v4_viewport_origin  resd 4
-   119          ******************       warning: uninitialized space declared in non-BSS section `.data': zeroing [-w+zeroing]
-   120 00000320 <res 10h>               v4_pixel_delta_x    resd 4
-   120          ******************       warning: uninitialized space declared in non-BSS section `.data': zeroing [-w+zeroing]
-   121 00000330 <res 10h>               v4_pixel_delta_y    resd 4
-   121          ******************       warning: uninitialized space declared in non-BSS section `.data': zeroing [-w+zeroing]
-   122                                  
-   123                                  align 64
-   124 00000340 000000000000000000-     v4_zero             dd 0.0, 0.0, 0.0, 0.0
-   124 00000349 00000000000000     
-   125 00000350 0000003F0000003F00-     v4_half             dd 0.5, 0.5, 0.5, 0.0
-   125 00000359 00003F00000000     
-   126 00000360 0000803F0000803F00-     v4_one              dd 1.0, 1.0, 1.0, 0.0
-   126 00000369 00803F00000000     
-   127 00000370 0000803F0000000000-     v4_red              dd 1.0, 0.0, 0.0, 0.0
-   127 00000379 00000000000000     
-   128 00000380 000000000000803F00-     v4_green            dd 0.0, 1.0, 0.0, 0.0
-   128 00000389 00000000000000     
-   129 00000390 000000000000000000-     v4_blue             dd 0.0, 0.0, 1.0, 0.0
-   129 00000399 00803F00000000     
-   130 000003A0 00007F4300007F4300-     v4_255              dd 255.0, 255.0, 255.0, 0.0
-   130 000003A9 007F4300000000     
-   131 000003B0 000000410000004100-     v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
-   131 000003B9 00004100000000     
-   132 000003C0 000080430000804300-     v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
-   132 000003C9 00804300000000     
-   133 000003D0 000080430000804300-     v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
-   133 000003D9 00804300000000     
-   134 000003E0 000000000000803F00-     v4_up               dd 0.0, 1.0, 0.0, 0.0
-   134 000003E9 00000000000000     
-   135 000003F0 000000400000004000-     v4_viewport_w       dd 2.0, 2.0, 2.0, 0.0
-   135 000003F9 00004000000000     
-   136 00000400 000000C0000000C000-     v4_viewport_nh      dd -2.0, -2.0, -2.0, 0.0
-   136 00000409 0000C000000000     
-   137 00000410 0000803F0000803F00-     v4_focal_len        dd 1.0, 1.0, 1.0, 0.0
-   137 00000419 00803F00000000     
-   138                                  
-   139                                  ;===========================================================
-   140                                  section .bss align=64
-   141                                  ;===========================================================
-   142                                  
-   143 00000000 ????????                regions_started     resd 1
-   144 00000004 ????????                regions_completed   resd 1
-   145 00000008 ??                      host_terminated  resb 1
+   118 00000300 000000000000000000-     v4_zero             dd 0.0, 0.0, 0.0, 0.0
+   118 00000309 00000000000000     
+   119 00000310 0000003F0000003F00-     v4_half             dd 0.5, 0.5, 0.5, 0.0
+   119 00000319 00003F00000000     
+   120 00000320 0000803F0000803F00-     v4_one              dd 1.0, 1.0, 1.0, 0.0
+   120 00000329 00803F00000000     
+   121 00000330 0000803F0000000000-     v4_red              dd 1.0, 0.0, 0.0, 0.0
+   121 00000339 00000000000000     
+   122 00000340 000000000000803F00-     v4_green            dd 0.0, 1.0, 0.0, 0.0
+   122 00000349 00000000000000     
+   123 00000350 000000000000000000-     v4_blue             dd 0.0, 0.0, 1.0, 0.0
+   123 00000359 00803F00000000     
+   124 00000360 00007F4300007F4300-     v4_255              dd 255.0, 255.0, 255.0, 0.0
+   124 00000369 007F4300000000     
+   125 00000370 0000803F0000803F00-     v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
+   125 00000379 00803F00000000     
+   126 00000380 000080430000804300-     v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
+   126 00000389 00804300000000     
+   127 00000390 000080430000804300-     v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
+   127 00000399 00804300000000     
+   128 000003A0 000000000000803F00-     v4_up               dd 0.0, 1.0, 0.0, 0.0
+   128 000003A9 00000000000000     
+   129 000003B0 000000400000004000-     v4_viewport_w       dd 2.0, 2.0, 2.0, 0.0
+   129 000003B9 00004000000000     
+   130 000003C0 000000C0000000C000-     v4_viewport_nh      dd -2.0, -2.0, -2.0, 0.0
+   130 000003C9 0000C000000000     
+   131 000003D0 0000803F0000803F00-     v4_focal_len        dd 1.0, 1.0, 1.0, 0.0
+   131 000003D9 00803F00000000     
+   132                                  
+   133                                  ;===========================================================
+   134                                  section .bss align=64
+   135                                  ;===========================================================
+   136                                  
+   137 00000000 ????????                regions_started     resd 1
+   138 00000004 ????????                regions_completed   resd 1
+   139 00000008 ??                      host_terminated  resb 1
+   140                                  
+   141 00000009 <res 37h>               alignb 64
+   142 00000040 <res 40h>               thread_memory_array resb Thread_size * THREAD_COUNT
+   143                                  
+   144                                  alignb 64
+   145 00000080 <res 80000h>            pixels              resb PIXEL_BUFFER_SIZE * 2
    146                                  
-   147 00000009 <res 37h>               alignb 64
-   148 00000040 <res 180h>              thread_memory_array resb Thread_size * THREAD_COUNT
-   149                                  
-   150                                  alignb 64
-   151 000001C0 <res 80000h>            pixels              resb PIXEL_BUFFER_SIZE * 2
+   147                                  align 64
+   148 00080080 <res 10h>               v4_look_from        resd 4
+   149 00080090 <res 10h>               v4_viewport_origin  resd 4
+   150 000800A0 <res 10h>               v4_pixel_delta_x    resd 4
+   151 000800B0 <res 10h>               v4_pixel_delta_y    resd 4
    152                                  
-   153 000801C0 ????????????????        glfw_window         resq 1
-   154 000801C8 ????????                gl_texture          resd 1
-   155 000801CC ????????                gl_vao              resd 1
-   156 000801D0 ????????                gl_program          resd 1
-   157                                  
-   158                                  ;===========================================================
-   159                                  section .text
-   160                                  ;===========================================================
-   161                                  
-   162                                  global __dso_handle
-   163                                  __dso_handle:
-   164 00000000 00000000                    dd 0
-   165                                  
-   166                                  exit_host:
-   167 00000004 C605(08000000)01            mov     [host_terminated], 1
-   168 0000000B E8(00000000)                call    glfwTerminate
-   169                                  exit:
-   170 00000010 B83C000000                  mov     rax, 60                 ; exit
-   171 00000015 4831FF                      xor     rdi, rdi
-   172 00000018 0F05                        syscall 
-   173                                  
-   174                                  global _start
-   175                                  _start:
-   176                                  ;= Platform Initialization =================================
-   177                                  ; We create a window with glfw and initialize gl3w for
-   178                                  ; OpenGL support. We create a texture to write pixels to
-   179                                  ; every frame, a quad vbo to map it onto, and a shader
-   180                                  ; program.
-   181                                  ;===========================================================
-   182                                      ; glfw
-   183 0000001A E8(00000000)                call    glfwInit
-   184 0000001F 83F801                      cmp     eax, 1
-   185 00000022 75EC                        jne     exit
-   186                                  
-   187 00000024 BE04000000                  mov     esi, 4
-   188 00000029 BF02200200                  mov     edi, 0x00022002         ; GLFW_CONTEXT_VERSION_MAJOR
-   189 0000002E E8(00000000)                call    glfwWindowHint
-   190 00000033 BE06000000                  mov     esi, 6
-   191 00000038 BF03200200                  mov     edi, 0x00022003         ; GLFW_CONTEXT_VERSION_MINOR
-   192 0000003D E8(00000000)                call    glfwWindowHint
-   193 00000042 BE08200200                  mov     esi, 0x00022008         ; GLFW_OPENGL_CORE_PROFILE
-   194 00000047 BF01200300                  mov     edi, 0x00032001         ; GLFW_OPENGL_PROFILE
-   195 0000004C E8(00000000)                call    glfwWindowHint
-   196                                  
-   197 00000051 41B800000000                mov     r8d, 0
-   198 00000057 B900000000                  mov     ecx, 0
-   199 0000005C 48BA-                       mov     rdx, window_name
-   199 0000005E [0B00000000000000] 
-   200 00000066 BEE0010000                  mov     esi, 480
-   201 0000006B BF80020000                  mov     edi, 640
-   202 00000070 E8(00000000)                call    glfwCreateWindow
-   203                                  
-   204 00000075 488905(C0010800)            mov     [glfw_window], rax
-   205 0000007C 66833D(C0010800)00          cmp     [glfw_window], 0
-   206 00000084 748A                        je      exit
-   207 00000086 488B3D(C0010800)            mov     rdi, [glfw_window]
-   208 0000008D E8(00000000)                call    glfwMakeContextCurrent
+   153                                  align 64
+   154 000800C0 ????????                cos_theta           resd 1
+   155 000800C4 ????????                sin_theta           resd 1
+   156 000800C8 ????????                cos_phi             resd 1
+   157 000800CC ????????                sin_phi             resd 1
+   158                                  
+   159 000800D0 ????????????????        glfw_window         resq 1
+   160 000800D8 ????????                gl_texture          resd 1
+   161 000800DC ????????                gl_vao              resd 1
+   162 000800E0 ????????                gl_program          resd 1
+   163                                  
+   164                                  ;===========================================================
+   165                                  section .text
+   166                                  ;===========================================================
+   167                                  
+   168                                  global __dso_handle
+   169                                  __dso_handle:
+   170 00000000 00000000                    dd 0
+   171                                  
+   172                                  exit_host:
+   173 00000004 C605(08000000)01            mov     [host_terminated], 1
+   174 0000000B E8(00000000)                call    glfwTerminate
+   175                                  exit:
+   176 00000010 B83C000000                  mov     rax, 60                 ; exit
+   177 00000015 4831FF                      xor     rdi, rdi
+   178 00000018 0F05                        syscall 
+   179                                  
+   180                                  global _start
+   181                                  _start:
+   182                                  ;= Platform Initialization =================================
+   183                                  ; We create a window with glfw and initialize gl3w for
+   184                                  ; OpenGL support. We create a texture to write pixels to
+   185                                  ; every frame, a quad vbo to map it onto, and a shader
+   186                                  ; program.
+   187                                  ;===========================================================
+   188                                      ; glfw
+   189 0000001A E8(00000000)                call    glfwInit
+   190 0000001F 83F801                      cmp     eax, 1
+   191 00000022 75EC                        jne     exit
+   192                                  
+   193 00000024 BE04000000                  mov     esi, 4
+   194 00000029 BF02200200                  mov     edi, 0x00022002         ; GLFW_CONTEXT_VERSION_MAJOR
+   195 0000002E E8(00000000)                call    glfwWindowHint
+   196 00000033 BE06000000                  mov     esi, 6
+   197 00000038 BF03200200                  mov     edi, 0x00022003         ; GLFW_CONTEXT_VERSION_MINOR
+   198 0000003D E8(00000000)                call    glfwWindowHint
+   199 00000042 BE08200200                  mov     esi, 0x00022008         ; GLFW_OPENGL_CORE_PROFILE
+   200 00000047 BF01200300                  mov     edi, 0x00032001         ; GLFW_OPENGL_PROFILE
+   201 0000004C E8(00000000)                call    glfwWindowHint
+   202                                  
+   203 00000051 41B800000000                mov     r8d, 0
+   204 00000057 B900000000                  mov     ecx, 0
+   205 0000005C 48BA-                       mov     rdx, window_name
+   205 0000005E [0B00000000000000] 
+   206 00000066 BEE0010000                  mov     esi, 480
+   207 0000006B BF80020000                  mov     edi, 640
+   208 00000070 E8(00000000)                call    glfwCreateWindow
    209                                  
-   210                                      ; gl3w
-   211 00000092 E8(00000000)                call    gl3wInit
-   212 00000097 83F800                      cmp     eax, 0
-   213 0000009A 0F8570FFFFFF                jne     exit
-   214                                  
-   215 000000A0 BE03000000                  mov     esi, 3
-   216 000000A5 BF03000000                  mov     edi, 3
-   217 000000AA E8(00000000)                call    gl3wIsSupported
-   218 000000AF 83F801                      cmp     eax, 1
-   219 000000B2 0F8558FFFFFF                jne     exit
+   210 00000075 488905(D0000800)            mov     [glfw_window], rax
+   211 0000007C 66833D(D0000800)00          cmp     [glfw_window], 0
+   212 00000084 748A                        je      exit
+   213 00000086 488B3D(D0000800)            mov     rdi, [glfw_window]
+   214 0000008D E8(00000000)                call    glfwMakeContextCurrent
+   215                                  
+   216                                      ; gl3w
+   217 00000092 E8(00000000)                call    gl3wInit
+   218 00000097 83F800                      cmp     eax, 0
+   219 0000009A 0F8570FFFFFF                jne     exit
    220                                  
-   221                                      ; OpenGL
-   222 000000B8 48BE-                       mov     rsi, gl_texture         ; Screen texture
-   222 000000BA [C801080000000000] 
-   223 000000C2 BF01000000                  mov     rdi, 1
-   224 000000C7 E8(00000000)                call    glGenTextures
-   225                                  
-   226 000000CC 8B35(C8010800)              mov     esi, [gl_texture]
-   227 000000D2 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   228 000000D7 E8(00000000)                call    glBindTexture
-   229                                  
-   230 000000DC BA2F810000                  mov     edx, 0x812F             ; GL_CLAMP_TO_EDGE
-   231 000000E1 BE02280000                  mov     esi, 0x2802             ; GL_TEXTURE_WRAP_S
-   232 000000E6 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   233 000000EB E8(00000000)                call    glTexParameteri
-   234 000000F0 BA2F810000                  mov     edx, 0x812F             ; GL_CLAMP_TO_EDGE
-   235 000000F5 BE03280000                  mov     esi, 0x2803             ; GL_TEXTURE_WRAP_T
-   236 000000FA BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   237 000000FF E8(00000000)                call    glTexParameteri
-   238 00000104 BA00260000                  mov     edx, 0x2600             ; GL_NEAREST
-   239 00000109 BE01280000                  mov     esi, 0x2801             ; GL_TEXTURE_MIN_FILTER
-   240 0000010E BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   241 00000113 E8(00000000)                call    glTexParameteri
-   242 00000118 BA00260000                  mov     edx, 0x2600             ; GL_NEAREST
-   243 0000011D BE00280000                  mov     esi, 0x2800             ; GL_TEXTURE_MAG_FILTER
-   244 00000122 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   245 00000127 E8(00000000)                call    glTexParameteri
-   246                                  
-   247 0000012C 48BE-                       mov     rsi, gl_vao             ; Quad mesh
-   247 0000012E [CC01080000000000] 
-   248 00000136 BF01000000                  mov     edi, 1
-   249 0000013B E8(00000000)                call    glGenVertexArrays
-   250                                  
-   251 00000140 8B3D(CC010800)              mov     edi, [gl_vao]
-   252 00000146 E8(00000000)                call    glBindVertexArray
-   253                                  
-   254 0000014B 4883EC10                    sub     rsp, 16                 ; make space for vbo pointer
-   255 0000014F 488D3424                    lea     rsi, [rsp]              ; [rsp] = vbo
-   256 00000153 BF01000000                  mov     edi, 1
-   257 00000158 E8(00000000)                call    glGenBuffers
-   258                                  
-   259 0000015D 8B3424                      mov     esi, [rsp]
-   260 00000160 BF92880000                  mov     edi, 0x8892             ; GL_ARRAY_BUFFER
-   261 00000165 E8(00000000)                call    glBindBuffer
-   262 0000016A 4883C410                    add     rsp, 16                 ; don't need vbo anymore
-   263                                  
-   264 0000016E 8B1D(43020000)              mov     ebx, [verts_len]
-   265 00000174 BD04000000                  mov     ebp, 4
-   266 00000179 0FAFEB                      imul    ebp, ebx
-   267 0000017C B9E4880000                  mov     ecx, 0x88E4             ; GL_STATIC_DRAW
-   268 00000181 48BA-                       mov     rdx, verts
-   268 00000183 [1302000000000000] 
-   269 0000018B 89EE                        mov     esi, ebp
-   270 0000018D BF92880000                  mov     edi, 0x8892             ; GL_ARRAY_BUFFER
-   271 00000192 E8(00000000)                call    glBufferData
-   272                                  
-   273 00000197 BF00000000                  mov     edi, 0
-   274 0000019C E8(00000000)                call    glEnableVertexAttribArray
-   275                                  
-   276 000001A1 41B900000000                mov     r9d, 0
-   277 000001A7 41B808000000                mov     r8d, 8
-   278 000001AD B900000000                  mov     ecx, 0
-   279 000001B2 BA06140000                  mov     edx, 0x1406             ; GL_FLOAT
-   280 000001B7 BE02000000                  mov     esi, 2
-   281 000001BC BF00000000                  mov     edi, 0
-   282 000001C1 E8(00000000)                call    glVertexAttribPointer
-   283                                  
-   284 000001C6 E8(00000000)                call    glCreateProgram
-   285 000001CB 8905(D0010800)              mov     [gl_program], eax       ; program id
-   286                                  
-   287 000001D1 48BA-                       mov     rdx, vert_src_ptr
-   287 000001D3 [0302000000000000] 
-   288 000001DB 48BE-                       mov     rsi, vert_src_len
-   288 000001DD [2D01000000000000] 
-   289 000001E5 BF318B0000                  mov     edi, 0x8B31             ; GL_VERTEX_SHADER
-   290 000001EA E84C050000                  call    compile_shader
-   291 000001EF 4189C4                      mov     r12d, eax               ; vert shader id
+   221 000000A0 BE03000000                  mov     esi, 3
+   222 000000A5 BF03000000                  mov     edi, 3
+   223 000000AA E8(00000000)                call    gl3wIsSupported
+   224 000000AF 83F801                      cmp     eax, 1
+   225 000000B2 0F8558FFFFFF                jne     exit
+   226                                  
+   227                                      ; OpenGL
+   228 000000B8 48BE-                       mov     rsi, gl_texture         ; Screen texture
+   228 000000BA [D800080000000000] 
+   229 000000C2 BF01000000                  mov     rdi, 1
+   230 000000C7 E8(00000000)                call    glGenTextures
+   231                                  
+   232 000000CC 8B35(D8000800)              mov     esi, [gl_texture]
+   233 000000D2 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   234 000000D7 E8(00000000)                call    glBindTexture
+   235                                  
+   236 000000DC BA2F810000                  mov     edx, 0x812F             ; GL_CLAMP_TO_EDGE
+   237 000000E1 BE02280000                  mov     esi, 0x2802             ; GL_TEXTURE_WRAP_S
+   238 000000E6 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   239 000000EB E8(00000000)                call    glTexParameteri
+   240 000000F0 BA2F810000                  mov     edx, 0x812F             ; GL_CLAMP_TO_EDGE
+   241 000000F5 BE03280000                  mov     esi, 0x2803             ; GL_TEXTURE_WRAP_T
+   242 000000FA BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   243 000000FF E8(00000000)                call    glTexParameteri
+   244 00000104 BA00260000                  mov     edx, 0x2600             ; GL_NEAREST
+   245 00000109 BE01280000                  mov     esi, 0x2801             ; GL_TEXTURE_MIN_FILTER
+   246 0000010E BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   247 00000113 E8(00000000)                call    glTexParameteri
+   248 00000118 BA00260000                  mov     edx, 0x2600             ; GL_NEAREST
+   249 0000011D BE00280000                  mov     esi, 0x2800             ; GL_TEXTURE_MAG_FILTER
+   250 00000122 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   251 00000127 E8(00000000)                call    glTexParameteri
+   252                                  
+   253 0000012C 48BE-                       mov     rsi, gl_vao             ; Quad mesh
+   253 0000012E [DC00080000000000] 
+   254 00000136 BF01000000                  mov     edi, 1
+   255 0000013B E8(00000000)                call    glGenVertexArrays
+   256                                  
+   257 00000140 8B3D(DC000800)              mov     edi, [gl_vao]
+   258 00000146 E8(00000000)                call    glBindVertexArray
+   259                                  
+   260 0000014B 4883EC10                    sub     rsp, 16                 ; make space for vbo pointer
+   261 0000014F 488D3424                    lea     rsi, [rsp]              ; [rsp] = vbo
+   262 00000153 BF01000000                  mov     edi, 1
+   263 00000158 E8(00000000)                call    glGenBuffers
+   264                                  
+   265 0000015D 8B3424                      mov     esi, [rsp]
+   266 00000160 BF92880000                  mov     edi, 0x8892             ; GL_ARRAY_BUFFER
+   267 00000165 E8(00000000)                call    glBindBuffer
+   268 0000016A 4883C410                    add     rsp, 16                 ; don't need vbo anymore
+   269                                  
+   270 0000016E 8B1D(43020000)              mov     ebx, [verts_len]
+   271 00000174 BD04000000                  mov     ebp, 4
+   272 00000179 0FAFEB                      imul    ebp, ebx
+   273 0000017C B9E4880000                  mov     ecx, 0x88E4             ; GL_STATIC_DRAW
+   274 00000181 48BA-                       mov     rdx, verts
+   274 00000183 [1302000000000000] 
+   275 0000018B 89EE                        mov     esi, ebp
+   276 0000018D BF92880000                  mov     edi, 0x8892             ; GL_ARRAY_BUFFER
+   277 00000192 E8(00000000)                call    glBufferData
+   278                                  
+   279 00000197 BF00000000                  mov     edi, 0
+   280 0000019C E8(00000000)                call    glEnableVertexAttribArray
+   281                                  
+   282 000001A1 41B900000000                mov     r9d, 0
+   283 000001A7 41B808000000                mov     r8d, 8
+   284 000001AD B900000000                  mov     ecx, 0
+   285 000001B2 BA06140000                  mov     edx, 0x1406             ; GL_FLOAT
+   286 000001B7 BE02000000                  mov     esi, 2
+   287 000001BC BF00000000                  mov     edi, 0
+   288 000001C1 E8(00000000)                call    glVertexAttribPointer
+   289                                  
+   290 000001C6 E8(00000000)                call    glCreateProgram
+   291 000001CB 8905(E0000800)              mov     [gl_program], eax       ; program id
    292                                  
-   293 000001F2 48BA-                       mov     rdx, frag_src_ptr
-   293 000001F4 [0B02000000000000] 
-   294 000001FC 48BE-                       mov     rsi, frag_src_len
-   294 000001FE [FF01000000000000] 
-   295 00000206 BF308B0000                  mov     edi, 0x8B30             ; GL_FRAGMENT_SHADER
-   296 0000020B E82B050000                  call    compile_shader
-   297 00000210 4189C5                      mov     r13d, eax               ; frag shader id
+   293 000001D1 48BA-                       mov     rdx, vert_src_ptr
+   293 000001D3 [0302000000000000] 
+   294 000001DB 48BE-                       mov     rsi, vert_src_len
+   294 000001DD [2D01000000000000] 
+   295 000001E5 BF318B0000                  mov     edi, 0x8B31             ; GL_VERTEX_SHADER
+   296 000001EA E8F1040000                  call    compile_shader
+   297 000001EF 4189C4                      mov     r12d, eax               ; vert shader id
    298                                  
-   299 00000213 8B3D(D0010800)              mov     edi, [gl_program]
-   300 00000219 E8(00000000)                call    glLinkProgram
-   301                                  
-   302 0000021E 4489E7                      mov     edi, r12d               ; after deleting shaders, r12,
-   303                                                                      ; r13 are free
-   304 00000221 E8(00000000)                call    glDeleteShader
-   305 00000226 4489EF                      mov     edi, r13d
-   306 00000229 E8(00000000)                call    glDeleteShader
+   299 000001F2 48BA-                       mov     rdx, frag_src_ptr
+   299 000001F4 [0B02000000000000] 
+   300 000001FC 48BE-                       mov     rsi, frag_src_len
+   300 000001FE [FF01000000000000] 
+   301 00000206 BF308B0000                  mov     edi, 0x8B30             ; GL_FRAGMENT_SHADER
+   302 0000020B E8D0040000                  call    compile_shader
+   303 00000210 4189C5                      mov     r13d, eax               ; frag shader id
+   304                                  
+   305 00000213 8B3D(E0000800)              mov     edi, [gl_program]
+   306 00000219 E8(00000000)                call    glLinkProgram
    307                                  
-   308                                  ;= Thread Creation =========================================
-   309                                  ; A number of threads are spawned and each given their own
-   310                                  ; instance of a thread-local structure.
-   311                                  ;===========================================================
-   312 0000022E C705(04000000)0000-         mov     dword [regions_completed], 0
-   312 00000236 0000               
-   313 00000238 C705(00000000)0001-         mov     dword [regions_started], REGIONS_COUNT ; otherwise the threads
-   313 00000240 0000               
-   314                                                                                     ; will start before the
-   315                                                                                     ; first frame is ready.
-   316 00000242 4C8D3D(40000000)            lea     r15, [thread_memory_array] ; Define base values for host thread
-   317 00000249 41C7471001000000            mov     dword [r15+Thread.host], 1 ; host = 1 for host thread
-   318                                  %if THREAD_COUNT > 1
-   319                                      %assign i 1
-   320                                      %rep THREAD_COUNT-1
-   321                                          %push thread_ctx
-   322                                          mov     rax, 56             ; sys_clone
-   323                                          mov     rdi, CLONE_FLAGS    ; flags
-   324                                          lea     rsi, [thread_memory_array + Thread_size * i] ; child stack pointer
-   325                                          mov     rdx, 0              ; parent thread id
-   326                                          mov     r10, 0              ; child thread id
-   327                                          mov     r8, 0               ; child thread local storage
-   328                                          syscall
-   329                                          cmp     rax, 0              ; 0 if we are child
-   330                                          jl      exit_host           ; error creating thread
-   331                                          jne     %$end_thread_creation ; host skips to the next thread creation
-   332                                          mov     r15, rsp            ; store thread memory ptr in r15
-   333                                          mov     [r15+Thread.host], 0 ; store the fact that we aren't the host
-   334                                          jmp     thread_idle         ; child threads jump straight to idle and
-   335                                                                      ; wait for work...
-   336                                          %$end_thread_creation:
-   337                                          %pop
-   338                                      %assign i i+1
-   339                                      %endrep
-   321                              <1>  %push thread_ctx
-   322 00000251 B838000000          <1>  mov rax, 56
-   323 00000256 BF008F0180          <1>  mov rdi, CLONE_FLAGS
-   324 0000025B 488D35(80000000)    <1>  lea rsi, [thread_memory_array + Thread_size * i]
-   325 00000262 BA00000000          <1>  mov rdx, 0
-   326 00000267 41BA00000000        <1>  mov r10, 0
-   327 0000026D 41B800000000        <1>  mov r8, 0
-   328 00000273 0F05                <1>  syscall
-   329 00000275 4883F800            <1>  cmp rax, 0
-   330 00000279 0F8C85FDFFFF        <1>  jl exit_host
-   331 0000027F 750D                <1>  jne %$end_thread_creation
-   332 00000281 4989E7              <1>  mov r15, rsp
-   333 00000284 41C6471000          <1>  mov [r15+Thread.host], 0
-   334 00000289 E9ED000000          <1>  jmp thread_idle
-   335                              <1> 
-   336                              <1>  %$end_thread_creation:
-   337                              <1>  %pop
-   338                              <1>  %assign i i+1
-   321                              <1>  %push thread_ctx
-   322 0000028E B838000000          <1>  mov rax, 56
-   323 00000293 BF008F0180          <1>  mov rdi, CLONE_FLAGS
-   324 00000298 488D35(C0000000)    <1>  lea rsi, [thread_memory_array + Thread_size * i]
-   325 0000029F BA00000000          <1>  mov rdx, 0
-   326 000002A4 41BA00000000        <1>  mov r10, 0
-   327 000002AA 41B800000000        <1>  mov r8, 0
-   328 000002B0 0F05                <1>  syscall
-   329 000002B2 4883F800            <1>  cmp rax, 0
-   330 000002B6 0F8C48FDFFFF        <1>  jl exit_host
-   331 000002BC 750D                <1>  jne %$end_thread_creation
-   332 000002BE 4989E7              <1>  mov r15, rsp
-   333 000002C1 41C6471000          <1>  mov [r15+Thread.host], 0
-   334 000002C6 E9B0000000          <1>  jmp thread_idle
-   335                              <1> 
-   336                              <1>  %$end_thread_creation:
-   337                              <1>  %pop
-   338                              <1>  %assign i i+1
-   321                              <1>  %push thread_ctx
-   322 000002CB B838000000          <1>  mov rax, 56
-   323 000002D0 BF008F0180          <1>  mov rdi, CLONE_FLAGS
-   324 000002D5 488D35(00010000)    <1>  lea rsi, [thread_memory_array + Thread_size * i]
-   325 000002DC BA00000000          <1>  mov rdx, 0
-   326 000002E1 41BA00000000        <1>  mov r10, 0
-   327 000002E7 41B800000000        <1>  mov r8, 0
-   328 000002ED 0F05                <1>  syscall
-   329 000002EF 4883F800            <1>  cmp rax, 0
-   330 000002F3 0F8C0BFDFFFF        <1>  jl exit_host
-   331 000002F9 750A                <1>  jne %$end_thread_creation
-   332 000002FB 4989E7              <1>  mov r15, rsp
-   333 000002FE 41C6471000          <1>  mov [r15+Thread.host], 0
-   334 00000303 EB76                <1>  jmp thread_idle
-   335                              <1> 
-   336                              <1>  %$end_thread_creation:
-   337                              <1>  %pop
-   338                              <1>  %assign i i+1
-   321                              <1>  %push thread_ctx
-   322 00000305 B838000000          <1>  mov rax, 56
-   323 0000030A BF008F0180          <1>  mov rdi, CLONE_FLAGS
-   324 0000030F 488D35(40010000)    <1>  lea rsi, [thread_memory_array + Thread_size * i]
-   325 00000316 BA00000000          <1>  mov rdx, 0
-   326 0000031B 41BA00000000        <1>  mov r10, 0
-   327 00000321 41B800000000        <1>  mov r8, 0
-   328 00000327 0F05                <1>  syscall
-   329 00000329 4883F800            <1>  cmp rax, 0
-   330 0000032D 0F8CD1FCFFFF        <1>  jl exit_host
-   331 00000333 750A                <1>  jne %$end_thread_creation
-   332 00000335 4989E7              <1>  mov r15, rsp
-   333 00000338 41C6471000          <1>  mov [r15+Thread.host], 0
-   334 0000033D EB3C                <1>  jmp thread_idle
-   335                              <1> 
-   336                              <1>  %$end_thread_creation:
-   337                              <1>  %pop
-   338                              <1>  %assign i i+1
-   321                              <1>  %push thread_ctx
-   322 0000033F B838000000          <1>  mov rax, 56
-   323 00000344 BF008F0180          <1>  mov rdi, CLONE_FLAGS
-   324 00000349 488D35(80010000)    <1>  lea rsi, [thread_memory_array + Thread_size * i]
-   325 00000350 BA00000000          <1>  mov rdx, 0
-   326 00000355 41BA00000000        <1>  mov r10, 0
-   327 0000035B 41B800000000        <1>  mov r8, 0
-   328 00000361 0F05                <1>  syscall
-   329 00000363 4883F800            <1>  cmp rax, 0
-   330 00000367 0F8C97FCFFFF        <1>  jl exit_host
-   331 0000036D 750A                <1>  jne %$end_thread_creation
-   332 0000036F 4989E7              <1>  mov r15, rsp
-   333 00000372 41C6471000          <1>  mov [r15+Thread.host], 0
-   334 00000377 EB02                <1>  jmp thread_idle
-   335                              <1> 
-   336                              <1>  %$end_thread_creation:
-   337                              <1>  %pop
-   338                              <1>  %assign i i+1
-   340                                  %endif
-   341 00000379 EB57                        jmp     start_frame             ; ...while the host thread instead prepares
-   342                                                                      ; the first frame
-   343                                  
-   344                                  ;= Thread Idle =============================================
-   345                                  ; Each thread, including the host, returns here when it is
-   346                                  ; looking for more work to do, i.e. regions of the screen to
-   347                                  ; render.
-   348                                  ;
-   349                                  ; Each thread iterates regions_started, and if all the
-   350                                  ; regions have been started, it continues to idle, unless it
-   351                                  ; is the host thread, in which case it checks if all regions
-   352                                  ; are complete and ends the frame if so, kicking off the
-   353                                  ; next round of work.
+   308 0000021E 4489E7                      mov     edi, r12d               ; after deleting shaders, r12,
+   309                                                                      ; r13 are free
+   310 00000221 E8(00000000)                call    glDeleteShader
+   311 00000226 4489EF                      mov     edi, r13d
+   312 00000229 E8(00000000)                call    glDeleteShader
+   313                                  
+   314                                  ;= Thread Creation =========================================
+   315                                  ; A number of threads are spawned and each given their own
+   316                                  ; instance of a thread-local structure.
+   317                                  ;===========================================================
+   318 0000022E C705(04000000)0000-         mov     dword [regions_completed], 0
+   318 00000236 0000               
+   319 00000238 C705(00000000)0001-         mov     dword [regions_started], REGIONS_COUNT ; otherwise the threads
+   319 00000240 0000               
+   320                                                                                     ; will start before the
+   321                                                                                     ; first frame is ready.
+   322 00000242 4C8D3D(40000000)            lea     r15, [thread_memory_array] ; Define base values for host thread
+   323 00000249 41C7471001000000            mov     dword [r15+Thread.host], 1 ; host = 1 for host thread
+   324                                  %if THREAD_COUNT > 1
+   325                                      %assign i 1
+   326                                      %rep THREAD_COUNT-1
+   327                                          %push thread_ctx
+   328                                          mov     rax, 56             ; sys_clone
+   329                                          mov     rdi, CLONE_FLAGS    ; flags
+   330                                          lea     rsi, [thread_memory_array + Thread_size * i] ; child stack pointer
+   331                                          mov     rdx, 0              ; parent thread id
+   332                                          mov     r10, 0              ; child thread id
+   333                                          mov     r8, 0               ; child thread local storage
+   334                                          syscall
+   335                                          cmp     rax, 0              ; 0 if we are child
+   336                                          jl      exit_host           ; error creating thread
+   337                                          jne     %$end_thread_creation ; host skips to the next thread creation
+   338                                          mov     r15, rsp            ; store thread memory ptr in r15
+   339                                          mov     [r15+Thread.host], 0 ; store the fact that we aren't the host
+   340                                          jmp     thread_idle         ; child threads jump straight to idle and
+   341                                                                      ; wait for work...
+   342                                          %$end_thread_creation:
+   343                                          %pop
+   344                                      %assign i i+1
+   345                                      %endrep
+   346                                  %endif
+   347 00000251 EB57                        jmp     start_frame             ; ...while the host thread instead prepares
+   348                                                                      ; the first frame
+   349                                  
+   350                                  ;= Thread Idle =============================================
+   351                                  ; Each thread, including the host, returns here when it is
+   352                                  ; looking for more work to do, i.e. regions of the screen to
+   353                                  ; render.
    354                                  ;
-   355                                  ; If there are still regions to render, the thread instead
-   356                                  ; jumps to render region, where it performs its work,
-   357                                  ; iterating regions started and regions complete in the
-   358                                  ; process.
-   359                                  ;===========================================================
-   360                                  thread_idle:
-   361 0000037B 66833D(08000000)01          cmp     [host_terminated], 1    ; host tips off the children to exit
-   362 00000383 0F8487FCFFFF                je      exit
-   363 00000389 B801000000                  mov     eax, 1
-   364 0000038E F00FC105(00000000)          lock    xadd [regions_started], eax ; iterate regions_started, storing the
-   365                                                                          ; last region index in eax
-   366 00000396 3D00010000                  cmp     eax, REGIONS_COUNT
-   367 0000039B 7D1B                        jge     all_regions_started
-   368                                                                      ; We have a region to render:
-   369 0000039D 41B800010000                mov     r8d, REGION_STRIDE      ; calculate start pixel index
-   370 000003A3 41F7E0                      mul     r8d                     ; store stride * index (eax) in eax
-   371 000003A6 41894718                    mov     [r15+Thread.current_pixel], eax
-   372 000003AA 0500010000                  add     eax, REGION_STRIDE      ; add stride to get end pixel index
-   373 000003AF 4189471C                    mov     [r15+Thread.end_pixel], eax
-   374 000003B3 E9E1010000                  jmp     render_region
-   375                                  all_regions_started:
-   376 000003B8 6641837F1000                cmp     [r15+Thread.host], 0    ; 0 if we are child
-   377 000003BE 74BB                        je      thread_idle             ; child threads keep patiently waiting
-   378                                  check_regions_complete:
-   379 000003C0 813D(04000000)0001-         cmp     dword [regions_completed], REGIONS_COUNT ; the host thread instead wants to
-   379 000003C8 0000               
-   380 000003CA 0F8D7C020000                jge     end_frame                                ; know if all the regions are
-   381 000003D0 EBA9                        jmp     thread_idle                              ; complete so it can end the frame
-   382                                  
-   383                                  ;= Start Frame =============================================
-   384                                  ; The host executes this before every frame is rendered
-   385                                  ; * Handle GLFW events, closing the program if requested
-   386                                  ; * Update the logical state of the program, such as the
-   387                                  ;   camera orientation
-   388                                  ; * Calculate info which is needed for rendering and
-   389                                  ;   invariant between regions, such as viewport geometry
-   390                                  ; * Notify threads to start work by setting regions started
-   391                                  ;   and regions complete to 0
-   392                                  ;===========================================================
-   393                                  start_frame:
-   394 000003D2 488B3D(C0010800)            mov     rdi, [glfw_window]      ; If GLFW has recieved a close request, we
-   395 000003D9 E8(00000000)                call    glfwWindowShouldClose   ; politely comply
-   396 000003DE 83F801                      cmp     eax, 1
-   397 000003E1 0F841DFCFFFF                je      exit_host
-   398                                  
-   399                                  %if OUTPUT_FRAMES_TO_FILE           ; For rendering ppm frames
-   400                                      mov     rdi, img_header
-   401                                      call    printf
-   402                                  %endif
-   403                                  
-   404                                      ; Update camera rotation (theta and phi), and find the
-   405                                      ; position (look from) with the following:
-   406                                      ;   x = distance * sin(phi) * cos(theta)
-   407                                      ;   y = distance * cos(phi)
-   408                                      ;   z = distance * sin(phi) * sin(theta)
-   409 000003E7 F30F10C1                    movss   xmm0, xmm1
-   410 000003EB F30F5805(88020000)          addss   xmm0, [cam_phi_per_sec]
-   411 000003F3 F30F1105(80020000)          movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
-   412 000003FB F30F1005(84020000)          movss   xmm0, [cam_theta]       
-   413 00000403 F30F5805(8C020000)          addss   xmm0, [cam_theta_per_sec]
-   414 0000040B F30F1105(84020000)          movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
-   415                                  
-   416 00000413 F30F100D(84020000)          movss   xmm1, [cam_theta]       ; We will be loading from phi and
-   417 0000041B F30F1015(80020000)          movss   xmm2, [cam_phi]         ; theta repeatedly, so we give them
-   418                                                                      ; their own registers in xmm1 and xmm2
-   419                                  
-   420 00000423 E8(00000000)                call    cosf                    ; cos(theta), assuming xmm0 is theta
-   421 00000428 F30F10D8                    movss   xmm3, xmm0              ; in xmm3
-   422 0000042C F30F10C1                    movss   xmm0, xmm1
-   423 00000430 E8(00000000)                call    sinf                    ; sin(theta)
-   424 00000435 F30F10E0                    movss   xmm4, xmm0              ; in xmm4
-   425 00000439 F30F10C2                    movss   xmm0, xmm2
-   426 0000043D E8(00000000)                call    cosf                    ; cos(phi)
-   427 00000442 F30F10E8                    movss   xmm5, xmm0              ; in xmm5
-   428 00000446 F30F10C2                    movss   xmm0, xmm2
-   429 0000044A E8(00000000)                call    sinf                    ; sin(phi)
-   430 0000044F F30F10F0                    movss   xmm6, xmm0              ; in xmm6
-   431                                  
-   432 00000453 F30F103D(90020000)          movss   xmm7, [cam_distance]    ; We store cam distance in
-   433 0000045B F30F10C7                    movss   xmm0, xmm7              ;   xmm0, xmm1, and xmm2.
-   434 0000045F F30F10CF                    movss   xmm1, xmm7              ; We will operate on them in place to get
-   435 00000463 F30F10D7                    movss   xmm2, xmm7              ;   camera x, y, and z
-   436                                  
-   437 00000467 660FEFC0                    pxor    xmm0, xmm0              ; xmm0 will eventually be the packed
-   438                                                                      ; position, and we want the last lane
-   439                                                                      ; to end up being 0.0
-   440                                  
-   441 0000046B F30F59C6                    mulss   xmm0, xmm6              ; x = distance * sin(phi)
-   442 0000046F F30F59C3                    mulss   xmm0, xmm3              ;   * cos(theta)
-   443 00000473 F30F59CD                    mulss   xmm1, xmm5              ; y = distance * cos(phi)
-   444 00000477 F30F59D6                    mulss   xmm2, xmm6              ; z = distance * sin(phi)
-   445 0000047B F30F59D4                    mulss   xmm2, xmm4              ;   * sin(theta)
-   446                                  
-   447 0000047F 660F3A21C110                insertps xmm0, xmm1, 0x10       ; Move y to lane 1
-   448 00000485 660F3A21C220                insertps xmm0, xmm2, 0x20       ;  and z to lane 2
-   449                                                                      ; Now xmm0 is our "look from" position
-   450                                  
-   451                                      ; Having calculated the camera position, we now find
-   452                                      ; three more key vectors. The first is the position of
-   453                                      ; the top left corner of the viewport in world space.
-   454                                      ; The other two are the u and v deltas between pixels
-   455                                      ; in the viewport.
-   456                                      ;
-   457                                      ; Along the way, we calculate the camera basis vectors:
-   458                                      ;   x = normalize(up X z), (where X is cross product)
-   459                                      ;   y = z X x
-   460                                      ;   z = normalize(look_from - look_at), (camera will look down -z)
-   461                                      ; We calculate basis z, then x, they y
-   462 0000048B 0F28D8                      movaps  xmm3, xmm0              ; basis z = look from
-   463                                      v3norm  xmm3, xmm14, xmm15      ;   normalized
-    13 0000048E 440F28F3            <1>  movaps %2, %1
-    14 00000492 66450F3A40F671      <1>  dpps %2, %2, 01110001b
-    15 00000499 F3450F52F6          <1>  rsqrtss %2, %2
-    16 0000049E 66450FEFFF          <1>  pxor %3, %3
-    17 000004A3 450F2EF7            <1>  ucomiss %2, %3
-    18 000004A7 740B                <1>  je %%is_zero
+   355                                  ; Each thread iterates regions_started, and if all the
+   356                                  ; regions have been started, it continues to idle, unless it
+   357                                  ; is the host thread, in which case it checks if all regions
+   358                                  ; are complete and ends the frame if so, kicking off the
+   359                                  ; next round of work.
+   360                                  ;
+   361                                  ; If there are still regions to render, the thread instead
+   362                                  ; jumps to render region, where it performs its work,
+   363                                  ; iterating regions started and regions complete in the
+   364                                  ; process.
+   365                                  ;===========================================================
+   366                                  thread_idle:
+   367 00000253 66833D(08000000)01          cmp     [host_terminated], 1    ; host tips off the children to exit
+   368 0000025B 0F84AFFDFFFF                je      exit
+   369 00000261 B801000000                  mov     eax, 1
+   370 00000266 F00FC105(00000000)          lock    xadd [regions_started], eax ; iterate regions_started, storing the
+   371                                                                          ; last region index in eax
+   372 0000026E 3D00010000                  cmp     eax, REGIONS_COUNT
+   373 00000273 7D1B                        jge     all_regions_started
+   374                                                                      ; We have a region to render:
+   375 00000275 41B800010000                mov     r8d, REGION_STRIDE      ; calculate start pixel index
+   376 0000027B 41F7E0                      mul     r8d                     ; store stride * index (eax) in eax
+   377 0000027E 41894718                    mov     [r15+Thread.current_pixel], eax
+   378 00000282 0500010000                  add     eax, REGION_STRIDE      ; add stride to get end pixel index
+   379 00000287 4189471C                    mov     [r15+Thread.end_pixel], eax
+   380 0000028B E929020000                  jmp     render_region
+   381                                  all_regions_started:
+   382 00000290 6641837F1000                cmp     [r15+Thread.host], 0    ; 0 if we are child
+   383 00000296 74BB                        je      thread_idle             ; child threads keep patiently waiting
+   384                                  check_regions_complete:
+   385 00000298 813D(04000000)0001-         cmp     dword [regions_completed], REGIONS_COUNT ; the host thread instead wants to
+   385 000002A0 0000               
+   386 000002A2 0F8D49030000                jge     end_frame                                ; know if all the regions are
+   387 000002A8 EBA9                        jmp     thread_idle                              ; complete so it can end the frame
+   388                                  
+   389                                  ;= Start Frame =============================================
+   390                                  ; The host executes this before every frame is rendered
+   391                                  ; * Handle GLFW events, closing the program if requested
+   392                                  ; * Update the logical state of the program, such as the
+   393                                  ;   camera orientation
+   394                                  ; * Calculate info which is needed for rendering and
+   395                                  ;   invariant between regions, such as viewport geometry
+   396                                  ; * Notify threads to start work by setting regions started
+   397                                  ;   and regions complete to 0
+   398                                  ;===========================================================
+   399                                  start_frame:
+   400 000002AA 488B3D(D0000800)            mov     rdi, [glfw_window]      ; If GLFW has recieved a close request, we
+   401 000002B1 E8(00000000)                call    glfwWindowShouldClose   ; politely comply
+   402 000002B6 83F801                      cmp     eax, 1
+   403 000002B9 0F8445FDFFFF                je      exit_host
+   404                                  
+   405                                  %if OUTPUT_FRAMES_TO_FILE           ; For rendering ppm frames
+   406                                      mov     rdi, img_header
+   407                                      call    printf
+   408                                  %endif
+   409                                  
+   410                                      ; Update camera rotation (theta and phi), and find the
+   411                                      ; position (look from) with the following:
+   412                                      ;   x = distance * sin(phi) * cos(theta)
+   413                                      ;   y = distance * cos(phi)
+   414                                      ;   z = distance * sin(phi) * sin(theta)
+   415 000002BF F30F10C1                    movss   xmm0, xmm1
+   416 000002C3 F30F5805(88020000)          addss   xmm0, [cam_phi_per_sec]
+   417 000002CB F30F1105(80020000)          movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
+   418 000002D3 F30F1005(84020000)          movss   xmm0, [cam_theta]       
+   419 000002DB F30F5805(8C020000)          addss   xmm0, [cam_theta_per_sec]
+   420 000002E3 F30F1105(84020000)          movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
+   421                                  
+   422 000002EB F30F1005(84020000)          movss   xmm0, [cam_theta]
+   423 000002F3 E8(00000000)                call    cosf                    ; cos(theta)
+   424 000002F8 F30F1105(C0000800)          movss   [cos_theta], xmm0
+   425 00000300 F30F1005(84020000)          movss   xmm0, [cam_theta]
+   426 00000308 E8(00000000)                call    sinf                    ; sin(theta)
+   427 0000030D F30F1105(C4000800)          movss   [sin_theta], xmm0 
+   428 00000315 F30F1005(80020000)          movss   xmm0, [cam_phi]
+   429 0000031D E8(00000000)                call    cosf                    ; cos(phi)
+   430 00000322 F30F1105(C8000800)          movss   [cos_phi], xmm0
+   431 0000032A F30F1005(80020000)          movss   xmm0, [cam_phi]
+   432 00000332 E8(00000000)                call    sinf                    ; sin(phi)
+   433 00000337 F30F1105(CC000800)          movss   [sin_phi], xmm0
+   434                                  
+   435 0000033F F30F103D(90020000)          movss   xmm7, [cam_distance]    ; We store cam distance in
+   436 00000347 F30F10C7                    movss   xmm0, xmm7              ;   xmm0, xmm1, and xmm2.
+   437 0000034B F30F10CF                    movss   xmm1, xmm7              ; We will operate on them in place to get
+   438 0000034F F30F10D7                    movss   xmm2, xmm7              ;   camera x, y, and z
+   439                                  
+   440 00000353 660FEFC0                    pxor    xmm0, xmm0              ; xmm0 will eventually be the packed
+   441                                                                      ; position, and we want the last lane
+   442                                                                      ; to end up being 0.0
+   443                                  
+   444 00000357 F30F5905(CC000800)          mulss   xmm0, [sin_phi]              ; x = distance * sin(phi)
+   445 0000035F F30F5905(C0000800)          mulss   xmm0, [cos_theta]              ;   * cos(theta)
+   446 00000367 F30F590D(C8000800)          mulss   xmm1, [cos_phi]              ; y = distance * cos(phi)
+   447 0000036F F30F5915(CC000800)          mulss   xmm2, [sin_phi]              ; z = distance * sin(phi)
+   448 00000377 F30F5915(C4000800)          mulss   xmm2, [sin_theta]              ;   * sin(theta)
+   449                                  
+   450 0000037F B803000000                  mov     rax, 3
+   451 00000384 F30F5AD2                    cvtss2sd xmm2, xmm2
+   452 00000388 F30F5AC9                    cvtss2sd xmm1, xmm1
+   453 0000038C F30F5AC0                    cvtss2sd xmm0, xmm0
+   454 00000390 48BF-                       mov     rdi, debug_msg
+   454 00000392 [2000000000000000] 
+   455 0000039A E8(00000000)                call    printf
+   456                                  
+   457 0000039F 660F3A21C110                insertps xmm0, xmm1, 0x10       ; Move y to lane 1
+   458 000003A5 660F3A21C220                insertps xmm0, xmm2, 0x20       ;  and z to lane 2
+   459                                                                      ; Now xmm0 is our "look from" position
+   460                                  
+   461                                      ; Having calculated the camera position, we now find
+   462                                      ; three more key vectors. The first is the position of
+   463                                      ; the top left corner of the viewport in world space.
+   464                                      ; The other two are the u and v deltas between pixels
+   465                                      ; in the viewport.
+   466                                      ;
+   467                                      ; Along the way, we calculate the camera basis vectors:
+   468                                      ;   x = normalize(up X z), (where X is cross product)
+   469                                      ;   y = z X x
+   470                                      ;   z = normalize(look_from - look_at), (camera will look down -z)
+   471                                      ; We calculate basis z, then x, they y
+   472 000003AB 0F28D8                      movaps  xmm3, xmm0              ; basis z = look from
+   473                                      v3norm  xmm3, xmm14, xmm15      ;   normalized
+    13 000003AE 440F28F3            <1>  movaps %2, %1
+    14 000003B2 66450F3A40F671      <1>  dpps %2, %2, 01110001b
+    15 000003B9 F3450F52F6          <1>  rsqrtss %2, %2
+    16 000003BE 66450FEFFF          <1>  pxor %3, %3
+    17 000003C3 450F2EF7            <1>  ucomiss %2, %3
+    18 000003C7 740B                <1>  je %%is_zero
     19                              <1> 
-    20 000004A9 450FC6F600          <1>  shufps %2, %2, 0
-    21 000004AE 410F59DE            <1>  mulps %1, %2
-    22 000004B2 EB04                <1>  jmp %%end
+    20 000003C9 450FC6F600          <1>  shufps %2, %2, 0
+    21 000003CE 410F59DE            <1>  mulps %1, %2
+    22 000003D2 EB04                <1>  jmp %%end
     23                              <1> %%is_zero:
-    24 000004B4 410F28DF            <1>  movaps %1, %3
+    24 000003D4 410F28DF            <1>  movaps %1, %3
     25                              <1> %%end:
-   464                                                                      ; We ignore look_at, since it's implicitly
-   465                                                                      ; placed at the origin in our world.
-   466                                  
-   467 000004B8 0F280D(E0030000)            movaps  xmm1, [v4_up]           ; basis x = up
-   468 000004BF 0F28E3                      movaps  xmm4, xmm3              ;           X
-   469                                      v3cross xmm1, xmm4, xmm5, xmm6  ;           z
-    46                              <1> 
-    47 000004C2 0F28EC              <1>  movaps %3, %2
-    48 000004C5 0FC6EDC9            <1>  shufps %3, %3, 11001001b
-    49 000004C9 0F28F1              <1>  movaps %4, %1
-    50 000004CC 0FC6F6C9            <1>  shufps %4, %4, 11001001b
-    51 000004D0 0F59E9              <1>  mulps %3, %1
-    52 000004D3 0F59F4              <1>  mulps %4, %2
-    53 000004D6 0F5CEE              <1>  subps %3, %4
-    54 000004D9 0FC6EDC9            <1>  shufps %3, %3, 11001001b
-    55                              <1> 
-    56 000004DD 0F28CD              <1>  movaps %1, %3
-   470                                      v3norm  xmm1, xmm5, xmm6        ;   normalized
-    13 000004E0 0F28E9              <1>  movaps %2, %1
-    14 000004E3 660F3A40ED71        <1>  dpps %2, %2, 01110001b
-    15 000004E9 F30F52ED            <1>  rsqrtss %2, %2
-    16 000004ED 660FEFF6            <1>  pxor %3, %3
-    17 000004F1 0F2EEE              <1>  ucomiss %2, %3
-    18 000004F4 7409                <1>  je %%is_zero
-    19                              <1> 
-    20 000004F6 0FC6ED00            <1>  shufps %2, %2, 0
-    21 000004FA 0F59CD              <1>  mulps %1, %2
-    22 000004FD EB03                <1>  jmp %%end
-    23                              <1> %%is_zero:
-    24 000004FF 0F28CE              <1>  movaps %1, %3
-    25                              <1> %%end:
-   471                                  
-   472 00000502 0F28D3                      movaps  xmm2, xmm3              ; basis y = z
-   473 00000505 0F28E1                      movaps  xmm4, xmm1              ;           X
-   474                                      v3cross xmm2, xmm4, xmm5, xmm6  ;           x
-    46                              <1> 
-    47 00000508 0F28EC              <1>  movaps %3, %2
-    48 0000050B 0FC6EDC9            <1>  shufps %3, %3, 11001001b
-    49 0000050F 0F28F2              <1>  movaps %4, %1
-    50 00000512 0FC6F6C9            <1>  shufps %4, %4, 11001001b
-    51 00000516 0F59EA              <1>  mulps %3, %1
-    52 00000519 0F59F4              <1>  mulps %4, %2
-    53 0000051C 0F5CEE              <1>  subps %3, %4
-    54 0000051F 0FC6EDC9            <1>  shufps %3, %3, 11001001b
-    55                              <1> 
-    56 00000523 0F28D5              <1>  movaps %1, %3
-   475                                                                      ; Now xmm 1,2,3 are basis x,y,z
+   474                                                                      ; We ignore look_at, since it's implicitly
+   475                                                                      ; placed at the origin in our world.
    476                                  
-   477 00000526 0F590D(F0030000)            mulps   xmm1, [v4_viewport_w]   ; We multiply the basis vectors by the world
-   478 0000052D 0F5915(00040000)            mulps   xmm2, [v4_viewport_nh]  ; space viewport dimensions to get the vectors
-   479                                                                      ; which span the world space viewport.
-   480                                                                      ; The height is negative because y coordinates
-   481                                                                      ; are flipped by convention.
-   482                                  
-   483 00000534 0F28E1                      movaps  xmm4, xmm1              ; The pixel delta vectors are the same as
-   484 00000537 0F5E25(C0030000)            divps   xmm4, [v4_pixels_w]     ; the viewport span vectors, but divided by
-   485 0000053E 0F28EA                      movaps  xmm5, xmm2              ; the render pixel dimensions.
-   486 00000541 0F5E2D(D0030000)            divps   xmm5, [v4_pixels_h]     ; Now xmm 4,5 are pixel delta x,y
-   487                                  
-   488                                      ; We now calculate the viewport origin in world space.
-   489 00000548 0F2835(10040000)            movaps  xmm6, [v4_focal_len]    ; We extend the camera basis z by a focal
-   490 0000054F 0F59F1                      mulps   xmm6, xmm1              ; length and subtract the look from position
-   491 00000552 0F5CF0                      subps   xmm6, xmm0              ; to get our point along the camera z basis.
+   477 000003D8 0F280D(A0030000)            movaps  xmm1, [v4_up]           ; basis x = up
+   478 000003DF 0F28E3                      movaps  xmm4, xmm3              ;           X
+   479                                      v3cross xmm1, xmm4, xmm5, xmm6  ;           z
+    46                              <1> 
+    47 000003E2 0F28EC              <1>  movaps %3, %2
+    48 000003E5 0FC6EDC9            <1>  shufps %3, %3, 11001001b
+    49 000003E9 0F28F1              <1>  movaps %4, %1
+    50 000003EC 0FC6F6C9            <1>  shufps %4, %4, 11001001b
+    51 000003F0 0F59E9              <1>  mulps %3, %1
+    52 000003F3 0F59F4              <1>  mulps %4, %2
+    53 000003F6 0F5CEE              <1>  subps %3, %4
+    54 000003F9 0FC6EDC9            <1>  shufps %3, %3, 11001001b
+    55                              <1> 
+    56 000003FD 0F28CD              <1>  movaps %1, %3
+   480                                      v3norm  xmm1, xmm5, xmm6        ;   normalized
+    13 00000400 0F28E9              <1>  movaps %2, %1
+    14 00000403 660F3A40ED71        <1>  dpps %2, %2, 01110001b
+    15 00000409 F30F52ED            <1>  rsqrtss %2, %2
+    16 0000040D 660FEFF6            <1>  pxor %3, %3
+    17 00000411 0F2EEE              <1>  ucomiss %2, %3
+    18 00000414 7409                <1>  je %%is_zero
+    19                              <1> 
+    20 00000416 0FC6ED00            <1>  shufps %2, %2, 0
+    21 0000041A 0F59CD              <1>  mulps %1, %2
+    22 0000041D EB03                <1>  jmp %%end
+    23                              <1> %%is_zero:
+    24 0000041F 0F28CE              <1>  movaps %1, %3
+    25                              <1> %%end:
+   481                                  
+   482 00000422 0F28D3                      movaps  xmm2, xmm3              ; basis y = z
+   483 00000425 0F28E1                      movaps  xmm4, xmm1              ;           X
+   484                                      v3cross xmm2, xmm4, xmm5, xmm6  ;           x
+    46                              <1> 
+    47 00000428 0F28EC              <1>  movaps %3, %2
+    48 0000042B 0FC6EDC9            <1>  shufps %3, %3, 11001001b
+    49 0000042F 0F28F2              <1>  movaps %4, %1
+    50 00000432 0FC6F6C9            <1>  shufps %4, %4, 11001001b
+    51 00000436 0F59EA              <1>  mulps %3, %1
+    52 00000439 0F59F4              <1>  mulps %4, %2
+    53 0000043C 0F5CEE              <1>  subps %3, %4
+    54 0000043F 0FC6EDC9            <1>  shufps %3, %3, 11001001b
+    55                              <1> 
+    56 00000443 0F28D5              <1>  movaps %1, %3
+   485                                                                      ; Now xmm 1,2,3 are basis x,y,z
+   486                                  
+   487 00000446 0F590D(B0030000)            mulps   xmm1, [v4_viewport_w]   ; We multiply the basis vectors by the world
+   488 0000044D 0F5915(C0030000)            mulps   xmm2, [v4_viewport_nh]  ; space viewport dimensions to get the vectors
+   489                                                                      ; which span the world space viewport.
+   490                                                                      ; The height is negative because y coordinates
+   491                                                                      ; are flipped by convention.
    492                                  
-   493 00000555 0F283D(50030000)            movaps  xmm7, [v4_half]         ; Then, we offset our position by half the
-   494 0000055C 0F59CF                      mulps   xmm1, xmm7              ; distance of our viewport span vectors.
-   495 0000055F 0F59D7                      mulps   xmm2, xmm7              
-   496 00000562 0F5CF1                      subps   xmm6, xmm1              
-   497 00000565 0F5CF2                      subps   xmm6, xmm2              ; Now xmm6 is our viewport origin.
-   498                                  
-   499 00000568 0F2905(00030000)            movaps  [v4_look_from], xmm0       ; Store these values into global memory
-   500 0000056F 0F2935(10030000)            movaps  [v4_viewport_origin], xmm6 ; for use during rendering.
-   501 00000576 0F2925(20030000)            movaps  [v4_pixel_delta_x], xmm4   
-   502 0000057D 0F292D(30030000)            movaps  [v4_pixel_delta_y], xmm5   ; Hip, hip, hooray!
-   503                                  
-   504 00000584 31C0                        xor     eax, eax                ; Reset region counters to start next frame
-   505 00000586 8705(04000000)              xchg    [regions_completed], eax
-   506 0000058C 31C0                        xor     eax, eax
-   507 0000058E 8705(00000000)              xchg    [regions_started], eax
-   508                                      ;mov    [regions_started], 0    ; Alternate way, want to profile to see
-   509                                      ;mov    [regions_completed], 0  ; if it's faster or slower
-   510 00000594 E9E2FDFFFF                  jmp     thread_idle             ; Back to thread idle to work on rendering
-   511                                  
-   512                                  ;= Render Region ===========================================
-   513                                  ; Threads execute this repeatedly until all regions have
-   514                                  ; been started. It runs in nested loops of the following
-   515                                  ; structure:
-   516                                  ;
-   517                                  ;   pixel start: for each pixel {
-   518                                  ;       sample start: for each sample {
-   519                                  ;           calculate ray direction from camera
-   520                                  ;           ray start: for each bounce {
-   521                                  ;               intersection start: for each object {
-   522                                  ;                   check intersection and track closest hit
-   523                                  ;               }
-   524                                  ;               if hit, get normal and calculate new ray
-   525                                  ;               direction based on material properties, or
-   526                                  ;               terminate
-   527                                  ;           }
-   528                                  ;           calculate sample color and add to sum
-   529                                  ;       }
-   530                                  ;       average the sum of sample colors and write to pixels
-   531                                  ;   }
-   532                                  ;
-   533                                  ; After we finish rendering the region, we iterate
-   534                                  ; regions complete and jump back to thread idle to wait for
-   535                                  ; more work.
-   536                                  ;===========================================================
-   537                                  render_region:
-   538                                  pixel_start:
-   539 00000599 41C6472000                  mov     byte [r15+Thread.sample_index], 0
-   540 0000059E 660FEFC0                    pxor    xmm0, xmm0
-   541 000005A2 410F2907                    movaps  [r15+Thread.color_sum], xmm0
-   542                                  sample_start:
-   543 000005A6 4831C0                      xor     rax, rax
-   544 000005A9 4831D2                      xor     rdx, rdx
-   545 000005AC 418B4718                    mov     eax, [r15+Thread.current_pixel]
-   546 000005B0 F735(C0020000)              div     dword [pixels_w]
-   547 000005B6 F30F2AC2                    cvtsi2ss xmm0, edx              ; x (i % w)
-   548 000005BA F30F2AC8                    cvtsi2ss xmm1, eax              ; y (i / w)
-   549                                  
-   550                                      ; For now, we are rendering a gradient
-   551 000005BE 0FC6C000                    shufps  xmm0, xmm0, 0
-   552 000005C2 0FC6C900                    shufps  xmm1, xmm1, 0
-   553 000005C6 0F5E05(C0030000)            divps   xmm0, [v4_pixels_w]
-   554 000005CD 0F5E0D(D0030000)            divps   xmm1, [v4_pixels_h]
-   555 000005D4 0F5905(70030000)            mulps   xmm0, [v4_red]
-   556 000005DB 0F590D(80030000)            mulps   xmm1, [v4_green]
-   557 000005E2 0F58C1                      addps   xmm0, xmm1
-   558 000005E5 410F280F                    movaps  xmm1, [r15+Thread.color_sum]
-   559 000005E9 0F58C1                      addps   xmm0, xmm1
-   560 000005EC 410F2907                    movaps  [r15+Thread.color_sum], xmm0
-   561                                  
-   562 000005F0 41FE4720                    inc     byte [r15+Thread.sample_index]
-   563 000005F4 41807F2008                  cmp     byte [r15+Thread.sample_index], SAMPLE_COUNT
-   564 000005F9 7CAB                        jl      sample_start
-   565                                  
-   566                                  write_to_pixel:
-   567 000005FB 410F2807                    movaps  xmm0, [r15+Thread.color_sum]
-   568 000005FF 0F5E05(B0030000)            divps   xmm0, [v4_sample_count]
-   569 00000606 0F51C0                      sqrtps  xmm0, xmm0              ; correct gamma
-   570 00000609 0F5905(A0030000)            mulps   xmm0, [v4_255]
-   571 00000610 660F5BC0                    cvtps2dq xmm0, xmm0             ; convert to dword integers
-   572 00000614 660F382BC0                  packusdw xmm0, xmm0             ; pack into 16bit words
-   573 00000619 660F67C0                    packuswb xmm0, xmm0             ; pack into bytes
-   574 0000061D 458B4718                    mov     r8d, [r15+Thread.current_pixel]
-   575 00000621 6766420F7E0485-             movd    dword [pixels+r8d*4], xmm0 ; move to pixel location
-   575 00000628 [C0010000]         
-   576                                  
-   577 0000062C 41FF4718                    inc     dword [r15+Thread.current_pixel]
-   578 00000630 458B471C                    mov     r8d, [r15+Thread.end_pixel]
-   579 00000634 45394718                    cmp     dword [r15+Thread.current_pixel], r8d
-   580 00000638 0F8C5BFFFFFF                jl      pixel_start
-   581                                  
-   582                                      ; Return to thread idle to wait for more work
-   583 0000063E F0668305(04000000)-         lock add [regions_completed], 1
-   583 00000646 01                 
-   584 00000647 E92FFDFFFF                  jmp     thread_idle
-   585                                  
-   586                                  ;= End Frame ===============================================
-   587                                  ; This is executed by the host thread once all pixel regions
-   588                                  ; are finished rendering.
-   589                                  ;
-   590                                  ; We push our pixels to the OpenGL texture, update our
-   591                                  ; viewport, draw the texture across the screen, then jump
-   592                                  ; back to start frame.
-   593                                  ;===========================================================
-   594                                  end_frame:
-   595 0000064C 6A00                        push    0
-   596 0000064E 68[C0010000]                push    pixels
-   597 00000653 6801140000                  push    0x1401                  ; GL_UNSIGNED_BYTE
-   598 00000658 6808190000                  push    0x1908                  ; GL_RGBA
-   599 0000065D 41B900000000                mov     r9d, 0
-   600 00000663 41B800010000                mov     r8d, PIXELS_H
-   601 00000669 B900010000                  mov     ecx, PIXELS_W
-   602 0000066E BA08190000                  mov     edx, 0x1908             ; GL_RGBA
-   603 00000673 BE00000000                  mov     esi, 0
-   604 00000678 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   605 0000067D E8(00000000)                call    glTexImage2D
-   606 00000682 4883C420                    add     rsp, 32
-   607                                  
-   608 00000686 4883EC10                    sub     rsp, 16                 ; make space for framebuffer dimensions
-   609 0000068A 488D1424                    lea     rdx, [rsp+0x00]         ; width
-   610 0000068E 488D742408                  lea     rsi, [rsp+0x08]         ; height
-   611 00000693 488B3D(C0010800)            mov     rdi, [glfw_window]
-   612 0000069A E8(00000000)                call    glfwGetFramebufferSize
-   613                                  
-   614 0000069F 488B0C24                    mov     rcx, [rsp+0x00]
-   615 000006A3 488B542408                  mov     rdx, [rsp+0x08]
-   616 000006A8 BE00000000                  mov     rsi, 0
-   617 000006AD BF00000000                  mov     rdi, 0
-   618 000006B2 E8(00000000)                call    glViewport
-   619 000006B7 4883C410                    add     rsp, 16
-   620                                  
-   621 000006BB F30F101D(40030000)          movss   xmm3, [v4_zero]
-   622 000006C3 F30F1015(40030000)          movss   xmm2, [v4_zero]
-   623 000006CB F30F100D(40030000)          movss   xmm1, [v4_zero]
-   624 000006D3 F30F1005(40030000)          movss   xmm0, [v4_zero]
-   625 000006DB E8(00000000)                call    glClearColor
-   626 000006E0 BF00400000                  mov     edi, 0x00004000         ; GL_COLOR_BUFFER_BIT
-   627 000006E5 E8(00000000)                call    glClear
-   628                                  
-   629 000006EA 8B3D(D0010800)              mov     edi, [gl_program]
-   630 000006F0 E8(00000000)                call    glUseProgram
-   631                                  
-   632 000006F5 8B35(C8010800)              mov     esi, [gl_texture]
-   633 000006FB BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
-   634 00000700 E8(00000000)                call    glBindTexture
-   635                                  
-   636 00000705 8B3D(CC010800)              mov     edi, [gl_vao]
-   637 0000070B E8(00000000)                call    glBindVertexArray
-   638                                  
-   639 00000710 8B15(43020000)              mov     edx, [verts_len]
-   640 00000716 BE00000000                  mov     esi, 0
-   641 0000071B BF04000000                  mov     edi, 0x0004             ; GL_TRIANGLES
-   642 00000720 E8(00000000)                call    glDrawArrays
-   643                                  
-   644 00000725 488B3D(C0010800)            mov     rdi, [glfw_window]      ; Main loop end
-   645 0000072C E8(00000000)                call    glfwSwapBuffers
-   646 00000731 E8(00000000)                call    glfwPollEvents
-   647                                  
-   648                                  %if OUTPUT_FRAMES_TO_FILE            ; Flush stdout, otherwise if we exit the
-   649                                      mov     rdi, 0                  ; program at the start of the next frame it
-   650                                      call    fflush                  ; might have insufficient time to finish
-   651                                  %endif                              ; writing data
-   652                                  
-   653 00000736 E997FCFFFF                  jmp start_frame                 ; And off we go again
-   654                                  
-   655                                  ;= Compile Shader ==========================================
-   656                                  ; Compiles a shader for OpenGL.
-   657                                  ;
-   658                                  ; input
-   659                                  ;   rdx: src address ptr
-   660                                  ;   rsi: src len address
-   661                                  ;   rdi: type
-   662                                  ; output
-   663                                  ;   rax: shader id
-   664                                  ;===========================================================
-   665                                  compile_shader:
-   666 0000073B 4883EC28                    sub     rsp, 40
-   667 0000073F 48893424                    mov     [rsp+0x00], rsi         ; src len address
-   668 00000743 4889542408                  mov     [rsp+0x08], rdx         ; src address ptr
-   669                                  
-   670 00000748 E8(00000000)                call    glCreateShader          ; type already in edi
-   671 0000074D 4889442410                  mov     [rsp+0x10], rax         ; shader id
-   672                                  
-   673 00000752 488B0C24                    mov     rcx, [rsp+0x00]
-   674 00000756 488B542408                  mov     rdx, [rsp+0x08]
-   675 0000075B BE01000000                  mov     rsi, 1
-   676 00000760 488B7C2410                  mov     rdi, [rsp+0x10]
-   677 00000765 E8(00000000)                call    glShaderSource
-   678                                  
-   679 0000076A 488B7C2410                  mov     rdi, [rsp+0x10]
-   680 0000076F E8(00000000)                call    glCompileShader
-   681                                  
-   682 00000774 488D542418                  lea     rdx, [rsp+0x18]         ; compilation success flag
-   683 00000779 BE818B0000                  mov     rsi, 0x8B81             ; GL_COMPILE_STATUS
-   684 0000077E 488B7C2410                  mov     rdi, [rsp+0x10]
-   685 00000783 E8(00000000)                call    glGetShaderiv
-   686                                  
-   687 00000788 48837C241800                cmp     qword [rsp+0x18], 0
-   688 0000078E 7539                        jne     compile_shader_success
-   689                                  
-   690 00000790 48B9-                       mov     rcx, msg                ; Log error if compilation failed
-   690 00000792 [0000000000000000] 
-   691 0000079A BA00000000                  mov     rdx, 0
-   692 0000079F BE00100000                  mov     rsi, msglen
-   693 000007A4 488B7C2410                  mov     rdi, [rsp+0x10]
-   694 000007A9 E8(00000000)                call    glGetShaderInfoLog
-   695                                  
-   696 000007AE B801000000                  mov     rax, 1                  ; write syscall
-   697 000007B3 BF01000000                  mov     rdi, 1                  ; stdout
-   698 000007B8 48BE-                       mov     rsi, msg
-   698 000007BA [0000000000000000] 
-   699 000007C2 BA00100000                  mov     rdx, msglen
-   700 000007C7 0F05                        syscall
-   701                                  
-   702                                  compile_shader_success:
-   703 000007C9 8B742410                    mov     esi, [rsp+0x10]
-   704 000007CD 8B3D(D0010800)              mov     edi, [gl_program]
-   705 000007D3 E8(00000000)                call    glAttachShader
-   706                                  
-   707 000007D8 488B442410                  mov     rax, [rsp+0x10]         ; return shader id
-   708 000007DD 4883C428                    add     rsp, 40
-   709 000007E1 C3                          ret
-   710                                  
+   493 00000454 0F28E1                      movaps  xmm4, xmm1              ; The pixel delta vectors are the same as
+   494 00000457 0F5E25(80030000)            divps   xmm4, [v4_pixels_w]     ; the viewport span vectors, but divided by
+   495 0000045E 0F28EA                      movaps  xmm5, xmm2              ; the render pixel dimensions.
+   496 00000461 0F5E2D(90030000)            divps   xmm5, [v4_pixels_h]     ; Now xmm 4,5 are pixel delta x,y
+   497                                  
+   498                                      ; We now calculate the viewport origin in world space.
+   499 00000468 0F2835(D0030000)            movaps  xmm6, [v4_focal_len]    ; We extend the camera basis z by a focal
+   500 0000046F 0F59F1                      mulps   xmm6, xmm1              ; length and subtract the look from position
+   501 00000472 0F5CF0                      subps   xmm6, xmm0              ; to get our point along the camera z basis.
+   502                                  
+   503 00000475 0F283D(10030000)            movaps  xmm7, [v4_half]         ; Then, we offset our position by half the
+   504 0000047C 0F59CF                      mulps   xmm1, xmm7              ; distance of our viewport span vectors.
+   505 0000047F 0F59D7                      mulps   xmm2, xmm7              
+   506 00000482 0F5CF1                      subps   xmm6, xmm1              
+   507 00000485 0F5CF2                      subps   xmm6, xmm2              ; Now xmm6 is our viewport origin.
+   508                                  
+   509 00000488 0F2905(80000800)            movaps  [v4_look_from], xmm0       ; Store these values into global memory
+   510 0000048F 0F2935(90000800)            movaps  [v4_viewport_origin], xmm6 ; for use during rendering.
+   511 00000496 0F2925(A0000800)            movaps  [v4_pixel_delta_x], xmm4   
+   512 0000049D 0F292D(B0000800)            movaps  [v4_pixel_delta_y], xmm5   ; Hip, hip, hooray!
+   513                                  
+   514 000004A4 31C0                        xor     eax, eax                ; Reset region counters to start next frame
+   515 000004A6 8705(04000000)              xchg    [regions_completed], eax
+   516 000004AC 31C0                        xor     eax, eax
+   517 000004AE 8705(00000000)              xchg    [regions_started], eax
+   518                                      ;mov    [regions_started], 0    ; Alternate way, want to profile to see
+   519                                      ;mov    [regions_completed], 0  ; if it's faster or slower
+   520 000004B4 E99AFDFFFF                  jmp     thread_idle             ; Back to thread idle to work on rendering
+   521                                  
+   522                                  ;= Render Region ===========================================
+   523                                  ; Threads execute this repeatedly until all regions have
+   524                                  ; been started. It runs in nested loops of the following
+   525                                  ; structure:
+   526                                  ;
+   527                                  ;   pixel start: for each pixel {
+   528                                  ;       sample start: for each sample {
+   529                                  ;           calculate ray direction from camera
+   530                                  ;           ray start: for each bounce {
+   531                                  ;               intersection start: for each object {
+   532                                  ;                   check intersection and track closest hit
+   533                                  ;               }
+   534                                  ;               if hit, get normal and calculate new ray
+   535                                  ;               direction based on material properties, or
+   536                                  ;               terminate
+   537                                  ;           }
+   538                                  ;           calculate sample color and add to sum
+   539                                  ;       }
+   540                                  ;       average the sum of sample colors and write to pixels
+   541                                  ;   }
+   542                                  ;
+   543                                  ; After we finish rendering the region, we iterate
+   544                                  ; regions complete and jump back to thread idle to wait for
+   545                                  ; more work.
+   546                                  ;===========================================================
+   547                                  render_region:
+   548                                  
+   549                                  pixel_start:
+   550 000004B9 41C6472000                  mov     byte [r15+Thread.sample_index], 0 ; Zero the sample index
+   551 000004BE 660FEFC0                    pxor    xmm0, xmm0                        ; and color sum.
+   552 000004C2 410F2907                    movaps  [r15+Thread.color_sum], xmm0
+   553                                  
+   554                                  sample_start:
+   555 000004C6 4831C0                      xor     rax, rax                ; Calculate the x and y coordinates
+   556 000004C9 4831D2                      xor     rdx, rdx                ; from the current pixel index.
+   557 000004CC 418B4718                    mov     eax, [r15+Thread.current_pixel]
+   558 000004D0 F735(C0020000)              div     dword [pixels_w]
+   559 000004D6 F30F2AC2                    cvtsi2ss xmm0, edx              ; x = i % w
+   560 000004DA F30F2AC8                    cvtsi2ss xmm1, eax              ; y = i / w
+   561                                      frand_unsigned xmm3             ; Get a random position between x and x+1
+     8 000004DE 418B6F14            <1>  mov ebp, [r15+Thread.seed]
+     9 000004E2 B8FD430300          <1>  mov eax, 0x000343FD
+    10 000004E7 F7ED                <1>  imul ebp
+    11 000004E9 05C39E2600          <1>  add eax, 0x00269EC3
+    12 000004EE 41894714            <1>  mov [r15+Thread.seed], eax
+    13 000004F2 C1E809              <1>  shr eax, 9
+    14 000004F5 0D0000803F          <1>  or eax, 0x3F800000
+    15 000004FA 660F6ED8            <1>  movd %1, eax
+    16 000004FE F30F5C1D(20030000)  <1>  subss %1, [v4_one]
+   562                                      frand_unsigned xmm4             ; and the same for y.
+     8 00000506 418B6F14            <1>  mov ebp, [r15+Thread.seed]
+     9 0000050A B8FD430300          <1>  mov eax, 0x000343FD
+    10 0000050F F7ED                <1>  imul ebp
+    11 00000511 05C39E2600          <1>  add eax, 0x00269EC3
+    12 00000516 41894714            <1>  mov [r15+Thread.seed], eax
+    13 0000051A C1E809              <1>  shr eax, 9
+    14 0000051D 0D0000803F          <1>  or eax, 0x3F800000
+    15 00000522 660F6EE0            <1>  movd %1, eax
+    16 00000526 F30F5C25(20030000)  <1>  subss %1, [v4_one]
+   563 0000052E F30F58C3                    addss   xmm0, xmm3              ; We will use these to index our viewport
+   564 00000532 F30F58CC                    addss   xmm1, xmm4              ; position for a random sample ray.
+   565 00000536 0FC6C000                    shufps  xmm0, xmm0, 0
+   566 0000053A 0FC6C900                    shufps  xmm1, xmm1, 0
+   567                                  
+   568 0000053E 0F5905(A0000800)            mulps   xmm0, [v4_pixel_delta_x]   ; We scale the deltas by x and y and add
+   569 00000545 0F590D(B0000800)            mulps   xmm1, [v4_pixel_delta_y]   ; them together along with the viewport
+   570 0000054C 0F58C1                      addps   xmm0, xmm1                 ; origin, giving us the corresponding
+   571 0000054F 0F5805(90000800)            addps   xmm0, [v4_viewport_origin] ; position on the viewport.
+   572 00000556 0F5C05(80000800)            subps   xmm0, [v4_look_from]       ; Subtracting the look from position
+   573                                                                         ; gives us a ray direction through the
+   574                                                                         ; viewport point.
+   575                                  
+   576                                      ; For now, we are rendering a gradient
+   577                                      ;shufps  xmm0, xmm0, 0
+   578                                      ;shufps  xmm1, xmm1, 0
+   579                                      ;divps   xmm0, [v4_pixels_w]
+   580                                      ;divps   xmm1, [v4_pixels_h]
+   581                                      ;mulps   xmm0, [v4_red]
+   582                                      ;mulps   xmm1, [v4_green]
+   583                                      ;addps   xmm0, xmm1
+   584                                      ;movaps  xmm1, [r15+Thread.color_sum]
+   585                                      ;addps   xmm0, xmm1
+   586                                      ;movaps  [r15+Thread.color_sum], xmm0
+   587                                  
+   588                                  calculate_sample_color:
+   589                                      v3norm  xmm0, xmm3, xmm4
+    13 0000055D 0F28D8              <1>  movaps %2, %1
+    14 00000560 660F3A40DB71        <1>  dpps %2, %2, 01110001b
+    15 00000566 F30F52DB            <1>  rsqrtss %2, %2
+    16 0000056A 660FEFE4            <1>  pxor %3, %3
+    17 0000056E 0F2EDC              <1>  ucomiss %2, %3
+    18 00000571 7409                <1>  je %%is_zero
+    19                              <1> 
+    20 00000573 0FC6DB00            <1>  shufps %2, %2, 0
+    21 00000577 0F59C3              <1>  mulps %1, %2
+    22 0000057A EB03                <1>  jmp %%end
+    23                              <1> %%is_zero:
+    24 0000057C 0F28C4              <1>  movaps %1, %3
+    25                              <1> %%end:
+   590 0000057F 0F5F05(00030000)            maxps   xmm0, [v4_zero]
+   591 00000586 410F280F                    movaps  xmm1, [r15+Thread.color_sum]
+   592 0000058A 0F58C1                      addps   xmm0, xmm1
+   593 0000058D 410F2907                    movaps  [r15+Thread.color_sum], xmm0
+   594                                  
+   595 00000591 41FE4720                    inc     byte [r15+Thread.sample_index]
+   596 00000595 41807F2001                  cmp     byte [r15+Thread.sample_index], SAMPLE_COUNT
+   597 0000059A 0F8C26FFFFFF                jl      sample_start
+   598                                  
+   599                                  write_to_pixel:
+   600 000005A0 410F2807                    movaps  xmm0, [r15+Thread.color_sum]
+   601 000005A4 0F5E05(70030000)            divps   xmm0, [v4_sample_count]
+   602 000005AB 0F51C0                      sqrtps  xmm0, xmm0              ; correct gamma
+   603 000005AE 0F5905(60030000)            mulps   xmm0, [v4_255]
+   604 000005B5 660F5BC0                    cvtps2dq xmm0, xmm0             ; convert to dword integers
+   605 000005B9 660F382BC0                  packusdw xmm0, xmm0             ; pack into 16bit words
+   606 000005BE 660F67C0                    packuswb xmm0, xmm0             ; pack into bytes
+   607 000005C2 458B4718                    mov     r8d, [r15+Thread.current_pixel]
+   608 000005C6 6766420F7E0485-             movd    dword [pixels+r8d*4], xmm0 ; move to pixel location
+   608 000005CD [80000000]         
+   609                                  
+   610 000005D1 41FF4718                    inc     dword [r15+Thread.current_pixel]
+   611 000005D5 458B471C                    mov     r8d, [r15+Thread.end_pixel]
+   612 000005D9 45394718                    cmp     dword [r15+Thread.current_pixel], r8d
+   613 000005DD 0F8CD6FEFFFF                jl      pixel_start
+   614                                  
+   615                                      ; Return to thread idle to wait for more work
+   616 000005E3 F0668305(04000000)-         lock add [regions_completed], 1
+   616 000005EB 01                 
+   617 000005EC E962FCFFFF                  jmp     thread_idle
+   618                                  
+   619                                  ;= End Frame ===============================================
+   620                                  ; This is executed by the host thread once all pixel regions
+   621                                  ; are finished rendering.
+   622                                  ;
+   623                                  ; We push our pixels to the OpenGL texture, update our
+   624                                  ; viewport, draw the texture across the screen, then jump
+   625                                  ; back to start frame.
+   626                                  ;===========================================================
+   627                                  end_frame:
+   628 000005F1 6A00                        push    0
+   629 000005F3 68[80000000]                push    pixels
+   630 000005F8 6801140000                  push    0x1401                  ; GL_UNSIGNED_BYTE
+   631 000005FD 6808190000                  push    0x1908                  ; GL_RGBA
+   632 00000602 41B900000000                mov     r9d, 0
+   633 00000608 41B800010000                mov     r8d, PIXELS_H
+   634 0000060E B900010000                  mov     ecx, PIXELS_W
+   635 00000613 BA08190000                  mov     edx, 0x1908             ; GL_RGBA
+   636 00000618 BE00000000                  mov     esi, 0
+   637 0000061D BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   638 00000622 E8(00000000)                call    glTexImage2D
+   639 00000627 4883C420                    add     rsp, 32
+   640                                  
+   641 0000062B 4883EC10                    sub     rsp, 16                 ; make space for framebuffer dimensions
+   642 0000062F 488D1424                    lea     rdx, [rsp+0x00]         ; width
+   643 00000633 488D742408                  lea     rsi, [rsp+0x08]         ; height
+   644 00000638 488B3D(D0000800)            mov     rdi, [glfw_window]
+   645 0000063F E8(00000000)                call    glfwGetFramebufferSize
+   646                                  
+   647 00000644 488B0C24                    mov     rcx, [rsp+0x00]
+   648 00000648 488B542408                  mov     rdx, [rsp+0x08]
+   649 0000064D BE00000000                  mov     rsi, 0
+   650 00000652 BF00000000                  mov     rdi, 0
+   651 00000657 E8(00000000)                call    glViewport
+   652 0000065C 4883C410                    add     rsp, 16
+   653                                  
+   654 00000660 F30F101D(00030000)          movss   xmm3, [v4_zero]
+   655 00000668 F30F1015(00030000)          movss   xmm2, [v4_zero]
+   656 00000670 F30F100D(00030000)          movss   xmm1, [v4_zero]
+   657 00000678 F30F1005(00030000)          movss   xmm0, [v4_zero]
+   658 00000680 E8(00000000)                call    glClearColor
+   659 00000685 BF00400000                  mov     edi, 0x00004000         ; GL_COLOR_BUFFER_BIT
+   660 0000068A E8(00000000)                call    glClear
+   661                                  
+   662 0000068F 8B3D(E0000800)              mov     edi, [gl_program]
+   663 00000695 E8(00000000)                call    glUseProgram
+   664                                  
+   665 0000069A 8B35(D8000800)              mov     esi, [gl_texture]
+   666 000006A0 BFE10D0000                  mov     edi, 0x0DE1             ; GL_TEXTURE_2D
+   667 000006A5 E8(00000000)                call    glBindTexture
+   668                                  
+   669 000006AA 8B3D(DC000800)              mov     edi, [gl_vao]
+   670 000006B0 E8(00000000)                call    glBindVertexArray
+   671                                  
+   672 000006B5 8B15(43020000)              mov     edx, [verts_len]
+   673 000006BB BE00000000                  mov     esi, 0
+   674 000006C0 BF04000000                  mov     edi, 0x0004             ; GL_TRIANGLES
+   675 000006C5 E8(00000000)                call    glDrawArrays
+   676                                  
+   677 000006CA 488B3D(D0000800)            mov     rdi, [glfw_window]      ; Main loop end
+   678 000006D1 E8(00000000)                call    glfwSwapBuffers
+   679 000006D6 E8(00000000)                call    glfwPollEvents
+   680                                  
+   681                                  %if OUTPUT_FRAMES_TO_FILE            ; Flush stdout, otherwise if we exit the
+   682                                      mov     rdi, 0                  ; program at the start of the next frame it
+   683                                      call    fflush                  ; might have insufficient time to finish
+   684                                  %endif                              ; writing data
+   685                                  
+   686 000006DB E9CAFBFFFF                  jmp start_frame                 ; And off we go again
+   687                                  
+   688                                  ;= Compile Shader ==========================================
+   689                                  ; Compiles a shader for OpenGL.
+   690                                  ;
+   691                                  ; input
+   692                                  ;   rdx: src address ptr
+   693                                  ;   rsi: src len address
+   694                                  ;   rdi: type
+   695                                  ; output
+   696                                  ;   rax: shader id
+   697                                  ;===========================================================
+   698                                  compile_shader:
+   699 000006E0 4883EC28                    sub     rsp, 40
+   700 000006E4 48893424                    mov     [rsp+0x00], rsi         ; src len address
+   701 000006E8 4889542408                  mov     [rsp+0x08], rdx         ; src address ptr
+   702                                  
+   703 000006ED E8(00000000)                call    glCreateShader          ; type already in edi
+   704 000006F2 4889442410                  mov     [rsp+0x10], rax         ; shader id
+   705                                  
+   706 000006F7 488B0C24                    mov     rcx, [rsp+0x00]
+   707 000006FB 488B542408                  mov     rdx, [rsp+0x08]
+   708 00000700 BE01000000                  mov     rsi, 1
+   709 00000705 488B7C2410                  mov     rdi, [rsp+0x10]
+   710 0000070A E8(00000000)                call    glShaderSource
+   711                                  
+   712 0000070F 488B7C2410                  mov     rdi, [rsp+0x10]
+   713 00000714 E8(00000000)                call    glCompileShader
+   714                                  
+   715 00000719 488D542418                  lea     rdx, [rsp+0x18]         ; compilation success flag
+   716 0000071E BE818B0000                  mov     rsi, 0x8B81             ; GL_COMPILE_STATUS
+   717 00000723 488B7C2410                  mov     rdi, [rsp+0x10]
+   718 00000728 E8(00000000)                call    glGetShaderiv
+   719                                  
+   720 0000072D 48837C241800                cmp     qword [rsp+0x18], 0
+   721 00000733 7539                        jne     compile_shader_success
+   722                                  
+   723 00000735 48B9-                       mov     rcx, msg                ; Log error if compilation failed
+   723 00000737 [0000000000000000] 
+   724 0000073F BA00000000                  mov     rdx, 0
+   725 00000744 BE00100000                  mov     rsi, msglen
+   726 00000749 488B7C2410                  mov     rdi, [rsp+0x10]
+   727 0000074E E8(00000000)                call    glGetShaderInfoLog
+   728                                  
+   729 00000753 B801000000                  mov     rax, 1                  ; write syscall
+   730 00000758 BF01000000                  mov     rdi, 1                  ; stdout
+   731 0000075D 48BE-                       mov     rsi, msg
+   731 0000075F [0000000000000000] 
+   732 00000767 BA00100000                  mov     rdx, msglen
+   733 0000076C 0F05                        syscall
+   734                                  
+   735                                  compile_shader_success:
+   736 0000076E 8B742410                    mov     esi, [rsp+0x10]
+   737 00000772 8B3D(E0000800)              mov     edi, [gl_program]
+   738 00000778 E8(00000000)                call    glAttachShader
+   739                                  
+   740 0000077D 488B442410                  mov     rax, [rsp+0x10]         ; return shader id
+   741 00000782 4883C428                    add     rsp, 40
+   742 00000786 C3                          ret
+   743                                  
