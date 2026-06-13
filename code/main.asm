@@ -109,7 +109,7 @@ cam_phi             dd 1.7
 cam_theta           dd -1.1
 cam_phi_per_sec     dd 0.0
 cam_theta_per_sec   dd 0.01
-cam_distance        dd 2.0
+cam_distance        dd 1.0
 
 align 64
 pixels_w            dd PIXELS_W
@@ -126,8 +126,8 @@ v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
 v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
 v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
 v4_up               dd 0.0, 1.0, 0.0, 0.0
-v4_viewport_w       dd 2.0, 2.0, 2.0, 0.0
-v4_viewport_nh      dd -2.0, -2.0, -2.0, 0.0
+v4_viewport_w       dd 4.0, 4.0, 4.0, 0.0
+v4_viewport_nh      dd -4.0, -4.0, -4.0, 0.0
 v4_focal_len        dd 1.0, 1.0, 1.0, 0.0
 
 ;===========================================================
@@ -412,7 +412,7 @@ start_frame:
     ;   x = distance * sin(phi) * cos(theta)
     ;   y = distance * cos(phi)
     ;   z = distance * sin(phi) * sin(theta)
-    movss   xmm0, xmm1
+    movss   xmm0, [cam_phi]
     addss   xmm0, [cam_phi_per_sec]
     movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
     movss   xmm0, [cam_theta]       
@@ -432,27 +432,20 @@ start_frame:
     call    sinf                    ; sin(phi)
     movss   [sin_phi], xmm0
 
-    movss   xmm7, [cam_distance]    ; We store cam distance in
-    movss   xmm0, xmm7              ;   xmm0, xmm1, and xmm2.
-    movss   xmm1, xmm7              ; We will operate on them in place to get
-    movss   xmm2, xmm7              ;   camera x, y, and z
-
     pxor    xmm0, xmm0              ; xmm0 will eventually be the packed
                                     ; position, and we want the last lane
                                     ; to end up being 0.0
 
-    mulss   xmm0, [sin_phi]              ; x = distance * sin(phi)
-    mulss   xmm0, [cos_theta]              ;   * cos(theta)
-    mulss   xmm1, [cos_phi]              ; y = distance * cos(phi)
-    mulss   xmm2, [sin_phi]              ; z = distance * sin(phi)
-    mulss   xmm2, [sin_theta]              ;   * sin(theta)
+    movss   xmm3, [cam_distance]    ; We store cam distance in
+    movss   xmm0, xmm3              ;   xmm0, xmm1, and xmm2.
+    movss   xmm1, xmm3              ; We will operate on them in place to get
+    movss   xmm2, xmm3              ;   camera x, y, and z
 
-    mov     rax, 3
-    cvtss2sd xmm2, xmm2
-    cvtss2sd xmm1, xmm1
-    cvtss2sd xmm0, xmm0
-    mov     rdi, debug_msg
-    call    printf
+    mulss   xmm0, [sin_phi]         ; x = distance * sin(phi)
+    mulss   xmm0, [cos_theta]       ;   * cos(theta)
+    mulss   xmm1, [cos_phi]         ; y = distance * cos(phi)
+    mulss   xmm2, [sin_phi]         ; z = distance * sin(phi)
+    mulss   xmm2, [sin_theta]       ;   * sin(theta)
 
     insertps xmm0, xmm1, 0x10       ; Move y to lane 1
     insertps xmm0, xmm2, 0x20       ;  and z to lane 2
@@ -572,18 +565,6 @@ sample_start:
     subps   xmm0, [v4_look_from]       ; Subtracting the look from position
                                        ; gives us a ray direction through the
                                        ; viewport point.
-
-    ; For now, we are rendering a gradient
-    ;shufps  xmm0, xmm0, 0
-    ;shufps  xmm1, xmm1, 0
-    ;divps   xmm0, [v4_pixels_w]
-    ;divps   xmm1, [v4_pixels_h]
-    ;mulps   xmm0, [v4_red]
-    ;mulps   xmm1, [v4_green]
-    ;addps   xmm0, xmm1
-    ;movaps  xmm1, [r15+Thread.color_sum]
-    ;addps   xmm0, xmm1
-    ;movaps  [r15+Thread.color_sum], xmm0
 
 calculate_sample_color:
     v3norm  xmm0, xmm3, xmm4
