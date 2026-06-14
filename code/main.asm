@@ -5,15 +5,15 @@ default rel
 
 ;= Configuration Symbols ===================================
 THREAD_COUNT            equ 1
-SAMPLE_COUNT            equ 1
-%define FSAMPLE_COUNT       1.0
+SAMPLE_COUNT            equ 4
+%define FSAMPLE_COUNT       4.0
 BOUNCE_COUNT            equ 32
 CUBES_COUNT             equ 1
 
-PIXELS_W                equ 256
-%define FPIXELS_W           256.0
-PIXELS_H                equ 256
-%define FPIXELS_H           256.0
+PIXELS_W                equ 128
+%define FPIXELS_W           128.0
+PIXELS_H                equ 128
+%define FPIXELS_H           128.0
 PIXELS_COUNT            equ PIXELS_W * PIXELS_H
 PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
 REGION_STRIDE           equ PIXELS_W
@@ -32,14 +32,14 @@ CLONE_FLAGS             equ CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | 
 
 ;= Structs =================================================
 struc Thread
-    .color_sum      resq 2
-    .host           resd 1
-    .seed           resd 1
-    .current_pixel  resd 1
-    .end_pixel      resd 1
-    .sample_index   resb 1
-    .bounce_index   resb 1
-    .object_index   resb 1
+    .color_sum          resq 2
+    .color_attenuation  resq 2
+    .host               resd 1
+    .seed               resd 1
+    .current_pixel      resd 1
+    .end_pixel          resd 1
+    .sample_index       resb 1
+    .bounce_index       resb 1
     alignb 64
 endstruc
 
@@ -109,15 +109,57 @@ cam_phi             dd 1.7
 cam_theta           dd -1.1
 cam_phi_per_sec     dd 0.0
 cam_theta_per_sec   dd 0.01
-cam_distance        dd 1.0
+cam_distance        dd 4.0
 
 align 64
 pixels_w            dd PIXELS_W
 
+%define p1 -1.5
+%define p2 0.0
+%define p3 1.5
 align 64
+v4_box_offsets:
+    dd p2, p2, p2, p2 ; dbg
+    dd p1, p1, p1, p2
+    dd p1, p2, p1, p2
+    dd p1, p3, p1, p2
+    dd p2, p1, p1, p2
+    dd p2, p2, p1, p2
+    dd p2, p3, p1, p2
+    dd p3, p1, p1, p2
+    dd p3, p2, p1, p2
+    dd p3, p3, p1, p2
+
+    dd p1, p1, p2, p2
+    dd p1, p2, p2, p2
+    dd p1, p3, p2, p2
+    dd p2, p1, p2, p2
+    dd p2, p2, p2, p2
+    dd p2, p3, p2, p2
+    dd p3, p1, p2, p2
+    dd p3, p2, p2, p2
+    dd p3, p3, p2, p2
+
+    dd p1, p1, p3, p2
+    dd p1, p2, p3, p2
+    dd p1, p3, p3, p2
+    dd p2, p1, p3, p2
+    dd p2, p2, p3, p2
+    dd p2, p3, p3, p2
+    dd p3, p1, p3, p2
+    dd p3, p2, p3, p2
+    dd p3, p3, p3, p2
+
+align 64
+v4_negative         dd -1.0, -1.0, -1.0, 0.0
+v4_eps              dd 0.01, 0.01, 0.01, 0.00
 v4_zero             dd 0.0, 0.0, 0.0, 0.0
 v4_half             dd 0.5, 0.5, 0.5, 0.0
 v4_one              dd 1.0, 1.0, 1.0, 0.0
+v4_inf              dd 0x7F800000, 0x7F800000, 0x7F800000, 0
+v4_negative_inf     dd 0xFF800000, 0xFF800000, 0xFF800000, 0
+v4_abs_mask         dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0
+v4_sign_mask        dd 0x80000000, 0x80000000, 0x80000000, 0
 v4_red              dd 1.0, 0.0, 0.0, 0.0
 v4_green            dd 0.0, 1.0, 0.0, 0.0
 v4_blue             dd 0.0, 0.0, 1.0, 0.0
@@ -129,6 +171,7 @@ v4_up               dd 0.0, 1.0, 0.0, 0.0
 v4_viewport_w       dd 4.0, 4.0, 4.0, 0.0
 v4_viewport_nh      dd -4.0, -4.0, -4.0, 0.0
 v4_focal_len        dd 1.0, 1.0, 1.0, 0.0
+v4_box_size         dd 0.5, 0.5, 0.5, 0.0
 
 ;===========================================================
 section .bss align=64
@@ -419,18 +462,18 @@ start_frame:
     addss   xmm0, [cam_theta_per_sec]
     movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
 
+    movss   xmm0, [cam_theta]       ; We calculate all the cos,sin/phi,theta
+    call    cosf                    ; permutations:
+    movss   [cos_theta], xmm0       ; cos(theta)
     movss   xmm0, [cam_theta]
-    call    cosf                    ; cos(theta)
-    movss   [cos_theta], xmm0
-    movss   xmm0, [cam_theta]
-    call    sinf                    ; sin(theta)
-    movss   [sin_theta], xmm0 
+    call    sinf                    
+    movss   [sin_theta], xmm0       ; sin(theta)
     movss   xmm0, [cam_phi]
-    call    cosf                    ; cos(phi)
-    movss   [cos_phi], xmm0
+    call    cosf                    
+    movss   [cos_phi], xmm0         ; cos(phi)
     movss   xmm0, [cam_phi]
-    call    sinf                    ; sin(phi)
-    movss   [sin_phi], xmm0
+    call    sinf                    
+    movss   [sin_phi], xmm0         ; sin(phi)
 
     pxor    xmm0, xmm0              ; xmm0 will eventually be the packed
                                     ; position, and we want the last lane
@@ -543,7 +586,7 @@ pixel_start:
     mov     byte [r15+Thread.sample_index], 0 ; Zero the sample index
     pxor    xmm0, xmm0                        ; and color sum.
     movaps  [r15+Thread.color_sum], xmm0
-
+   
 sample_start:
     xor     rax, rax                ; Calculate the x and y coordinates
     xor     rdx, rdx                ; from the current pixel index.
@@ -562,12 +605,136 @@ sample_start:
     mulps   xmm1, [v4_pixel_delta_y]   ; them together along with the viewport
     addps   xmm0, xmm1                 ; origin, giving us the corresponding
     addps   xmm0, [v4_viewport_origin] ; position on the viewport.
-    subps   xmm0, [v4_look_from]       ; Subtracting the look from position
-                                       ; gives us a ray direction through the
+    movaps  xmm1, [v4_look_from]       ; Subtracting the look from position
+    subps   xmm0, xmm1                 ; gives us a ray direction through the
                                        ; viewport point.
 
+    mov     byte [r15+Thread.bounce_index], 0    ; Initialize bounce index and
+    movaps  xmm2, [v4_one]                       ; start color attenuation at 1.
+    movaps  [r15+Thread.color_attenuation], xmm2
+
+    ; NOTE: One possible reason our last implementation
+    ; was screwed up is that we were tracking t far, but we
+    ; weren't rejecting intersections on the basis of this
+    ; value, we were only tracking t near.
+    ;
+    ; To alleviate this, we might need to do the same check
+    ; as with t near, but does that also mean we need to do
+    ; either one or the other?
+    ;
+    ; Whatever we do, remember the following:
+    ;
+    ; If we are outside, t near is > 0. This is because it
+    ; being 0 or below means it is at the origin or behind
+    ; it, respectively. If t near < 0, t far is the t along
+    ; the ray corresponding to the hit we care about.
+    ;
+    ; Therefore, to answer the question above, the check
+    ; is between whatever the hit t we care about is for the
+    ; current intersection and whatever hit t we cared about
+    ; for the closest intersection. These could be
+    ; mismatched. If later calculations require the use of
+    ; both t far and t near, that means we need to store
+    ; t hit in a third variable. If we only need t hit, we
+    ; should only store t hit.
+    ;
+    ; It seems we only need to track t hit
+
+ray_start:                          ; Keep intersection data in registers:
+                                    ; xmm0: ray direction, assumed already here
+                                    ; xmm1: ray origin
+    movaps  xmm2, [v4_inf]          ; xmm2: closest t hit
+                                    ; xmm3: closest t1/t2
+    xor     r8, r8                  ;   r8: object index
+                                    ;   r9: closest hit inside?
+intersection_start:
+    lea     rsi, [v4_box_offsets]   ; First, we index the box we will test
+    mov     rax, r8                 ; our ray against.
+    mov     rdi, 16                 ; Size is 16, we should probably make a
+    mul     rdi                     ; struct for this eventually.
+    add     rsi, rax                ; rsi now has address of the box position.
+
+    movaps  xmm4, [v4_one]          ; Calculate the inverse of the ray direction
+    divps   xmm4, xmm0              ; to be used to get both the ray origin and
+                                    ; half the box extents in terms of t.
+
+    movaps  xmm5, xmm4              ; Calculate -(ray origin / direction), which
+    movaps  xmm6, xmm1              ; represents the world origin in t space -
+    subps   xmm6, [rsi]             ; the ray t distance per-axis. We offset the
+    mulps   xmm5, xmm6              ; ray origin for this calculation so we can
+    xorps   xmm5, [v4_sign_mask]    ; act like the box is at the origin.
+
+    movaps  xmm6, xmm4              ; Calculate box size / abs(ray direction),
+    andps   xmm6, [v4_abs_mask]     ; which encodes the ray t distance from the
+    mulps   xmm6, [v4_box_size]     ; center of the box to either slab boundary
+                                    ; for each axis.
+
+    movaps  xmm4, xmm5              ; Calculate both t1 and t2, which encode
+    subps   xmm4, xmm6              ; the per-axis intersection times for the
+    addps   xmm5, xmm6              ; near and far hits, respectively. They are
+                                    ; calculated by subbing and adding the half
+                                    ; extents to the ray origin in t space.
+    insertps xmm4, [v4_negative_inf], 0x30 ; NOTE: The original code included
+    insertps xmm5, [v4_inf], 0x30          ; this for the max and min logic
+                                           ; below, but I'm not sure if this
+                                           ; is needed or not.
+
+    movaps  xmm6, xmm4              ; For t1, we calculate a value we call
+    movshdup xmm7, xmm4             ; t entry, which is the max element of t1.
+    maxps   xmm6, xmm7              ;
+    movhlps xmm7, xmm6              ; This is the t distance where the ray is
+    maxps   xmm6, xmm7              ; inside all three slabs, and therefore the
+    shufps  xmm6, xmm6, 0           ; ray t of the near hit.
+
+    movaps  xmm7, xmm5              ; We perform the same calculation for t2,
+    movshdup xmm8, xmm5             ; but for the min element, garnering our
+    minps   xmm7, xmm8              ; t exit value.
+    movhlps xmm8, xmm7              ; If we are outside the box, t entry is the
+    minps   xmm7, xmm8              ; point we care about, and if we are
+    shufps  xmm7, xmm7, 0           ; outside, it's t exit.
+
+    ; Having calculated t entry and t exit, we now have to
+    ; determine if an intersection did in fact occur.
+    ucomiss xmm6, xmm7              ; If t entry > t exit, there was no
+    jae     intersection_continue   ; intersection.
+
+    ucomiss xmm7, [v4_zero]         ; If t exit < 0.0, there was no
+    jbe     intersection_continue   ; intersection.
+
+    ucomiss xmm6, [v4_zero]         ; If t entry < 0 we hit from inside,
+    jbe     intersection_inside     ; otherwise we hit from outside.
+
+intersection_outside: ; Label is only here for clarity.
+    ucomiss xmm6, xmm2              ; When hitting from the outside, t entry is
+    jae     intersection_continue   ; the relevant hit distance. If it doesn't
+                                    ; beat the closest, we skip this hit.
+    movaps  xmm2, xmm6              ; If we are the closest hit, we track our
+    movaps  xmm3, xmm4              ; t entry value as the closest t hit and
+    mov     r9, 0                   ; our t1 value. We also track that we hit
+                                    ; from the outside with r9 = 0.
+    jmp     intersection_continue
+
+intersection_inside
+    ucomiss xmm7, xmm2              ; When hitting from the inside, perform the
+    ja      intersection_continue   ; same logic, but using t exit, t2, and
+                                    ; r9 = 1.
+    movaps  xmm2, xmm7              ; NOTE: is ja the right condition up there?
+    movaps  xmm3, xmm5
+    mov     r9, 1
+
+intersection_continue:
+    inc     r8
+    cmp     r8, 1
+    jl      intersection_start
+
 calculate_sample_color:
+    ucomiss xmm2, [v4_inf]
+    je      bg_color
+    movaps  xmm0, xmm2
+    jmp     end_color
+bg_color:
     v3norm  xmm0, xmm3, xmm4
+end_color:
     maxps   xmm0, [v4_zero]
     movaps  xmm1, [r15+Thread.color_sum]
     addps   xmm0, xmm1
