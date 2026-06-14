@@ -4,16 +4,16 @@ default rel
 %include 'rand.asm'
 
 ;= Configuration Symbols ===================================
-THREAD_COUNT            equ 1
-SAMPLE_COUNT            equ 4
-%define FSAMPLE_COUNT       4.0
+THREAD_COUNT            equ 7
+SAMPLE_COUNT            equ 8
+%define FSAMPLE_COUNT       8.0
 BOUNCE_COUNT            equ 32
 CUBES_COUNT             equ 1
 
-PIXELS_W                equ 128
-%define FPIXELS_W           128.0
-PIXELS_H                equ 128
-%define FPIXELS_H           128.0
+PIXELS_W                equ 256
+%define FPIXELS_W           256.0
+PIXELS_H                equ 256
+%define FPIXELS_H           256.0
 PIXELS_COUNT            equ PIXELS_W * PIXELS_H
 PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
 REGION_STRIDE           equ PIXELS_W
@@ -105,11 +105,11 @@ verts               dd 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1
 verts_len           dd 12
 
 align 64
-cam_phi             dd 1.7
+cam_phi             dd 2.1
 cam_theta           dd -1.1
 cam_phi_per_sec     dd 0.0
 cam_theta_per_sec   dd 0.01
-cam_distance        dd 4.0
+cam_distance        dd 6.0
 
 align 64
 pixels_w            dd PIXELS_W
@@ -119,7 +119,7 @@ pixels_w            dd PIXELS_W
 %define p3 1.5
 align 64
 v4_box_offsets:
-    dd p2, p2, p2, p2 ; dbg
+    ;dd p2, p2, p2, p2 ; dbg
     dd p1, p1, p1, p2
     dd p1, p2, p1, p2
     dd p1, p3, p1, p2
@@ -168,9 +168,9 @@ v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
 v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
 v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
 v4_up               dd 0.0, 1.0, 0.0, 0.0
-v4_viewport_w       dd 4.0, 4.0, 4.0, 0.0
-v4_viewport_nh      dd -4.0, -4.0, -4.0, 0.0
-v4_focal_len        dd 1.0, 1.0, 1.0, 0.0
+v4_viewport_w       dd 12.0, 12.0, 12.0, 0.0
+v4_viewport_nh      dd -12.0, -12.0, -12.0, 0.0
+v4_focal_len        dd 4.0, 4.0, 4.0, 0.0
 v4_box_size         dd 0.5, 0.5, 0.5, 0.0
 
 ;===========================================================
@@ -533,7 +533,7 @@ start_frame:
 
     ; We now calculate the viewport origin in world space.
     movaps  xmm6, [v4_focal_len]    ; We extend the camera basis z by a focal
-    mulps   xmm6, xmm1              ; length and subtract the look from position
+    mulps   xmm6, xmm3              ; length and subtract the look from position
     subps   xmm6, xmm0              ; to get our point along the camera z basis.
 
     movaps  xmm7, [v4_half]         ; Then, we offset our position by half the
@@ -603,46 +603,19 @@ sample_start:
 
     mulps   xmm0, [v4_pixel_delta_x]   ; We scale the deltas by x and y and add
     mulps   xmm1, [v4_pixel_delta_y]   ; them together along with the viewport
-    addps   xmm0, xmm1                 ; origin, giving us the corresponding
-    addps   xmm0, [v4_viewport_origin] ; position on the viewport.
-    movaps  xmm1, [v4_look_from]       ; Subtracting the look from position
-    subps   xmm0, xmm1                 ; gives us a ray direction through the
+    addps   xmm1, xmm0                 ; origin, giving us the corresponding
+    addps   xmm1, [v4_viewport_origin] ; position on the viewport.
+    movaps  xmm0, [v4_look_from]       ; Subtracting the look from position
+    subps   xmm1, xmm0                 ; gives us a ray direction through the
                                        ; viewport point.
 
     mov     byte [r15+Thread.bounce_index], 0    ; Initialize bounce index and
     movaps  xmm2, [v4_one]                       ; start color attenuation at 1.
     movaps  [r15+Thread.color_attenuation], xmm2
 
-    ; NOTE: One possible reason our last implementation
-    ; was screwed up is that we were tracking t far, but we
-    ; weren't rejecting intersections on the basis of this
-    ; value, we were only tracking t near.
-    ;
-    ; To alleviate this, we might need to do the same check
-    ; as with t near, but does that also mean we need to do
-    ; either one or the other?
-    ;
-    ; Whatever we do, remember the following:
-    ;
-    ; If we are outside, t near is > 0. This is because it
-    ; being 0 or below means it is at the origin or behind
-    ; it, respectively. If t near < 0, t far is the t along
-    ; the ray corresponding to the hit we care about.
-    ;
-    ; Therefore, to answer the question above, the check
-    ; is between whatever the hit t we care about is for the
-    ; current intersection and whatever hit t we cared about
-    ; for the closest intersection. These could be
-    ; mismatched. If later calculations require the use of
-    ; both t far and t near, that means we need to store
-    ; t hit in a third variable. If we only need t hit, we
-    ; should only store t hit.
-    ;
-    ; It seems we only need to track t hit
-
 ray_start:                          ; Keep intersection data in registers:
-                                    ; xmm0: ray direction, assumed already here
-                                    ; xmm1: ray origin
+                                    ; xmm0: ray origin
+                                    ; xmm1: ray direction
     movaps  xmm2, [v4_inf]          ; xmm2: closest t hit
                                     ; xmm3: closest t1/t2
     xor     r8, r8                  ;   r8: object index
@@ -655,14 +628,14 @@ intersection_start:
     add     rsi, rax                ; rsi now has address of the box position.
 
     movaps  xmm4, [v4_one]          ; Calculate the inverse of the ray direction
-    divps   xmm4, xmm0              ; to be used to get both the ray origin and
+    divps   xmm4, xmm1              ; to be used to get both the ray origin and
                                     ; half the box extents in terms of t.
 
     movaps  xmm5, xmm4              ; Calculate -(ray origin / direction), which
-    movaps  xmm6, xmm1              ; represents the world origin in t space -
+    movaps  xmm6, xmm0              ; represents the world origin in t space, or
     subps   xmm6, [rsi]             ; the ray t distance per-axis. We offset the
     mulps   xmm5, xmm6              ; ray origin for this calculation so we can
-    xorps   xmm5, [v4_sign_mask]    ; act like the box is at the origin.
+    xorps   xmm5, [v4_sign_mask]    ; act like the box is at the world origin.
 
     movaps  xmm6, xmm4              ; Calculate box size / abs(ray direction),
     andps   xmm6, [v4_abs_mask]     ; which encodes the ray t distance from the
@@ -704,7 +677,7 @@ intersection_start:
     ucomiss xmm6, [v4_zero]         ; If t entry < 0 we hit from inside,
     jbe     intersection_inside     ; otherwise we hit from outside.
 
-intersection_outside: ; Label is only here for clarity.
+intersection_outside: ; Label only here for clarity.
     ucomiss xmm6, xmm2              ; When hitting from the outside, t entry is
     jae     intersection_continue   ; the relevant hit distance. If it doesn't
                                     ; beat the closest, we skip this hit.
@@ -724,21 +697,21 @@ intersection_inside
 
 intersection_continue:
     inc     r8
-    cmp     r8, 1
+    cmp     r8, 27
     jl      intersection_start
 
 calculate_sample_color:
     ucomiss xmm2, [v4_inf]
     je      bg_color
-    movaps  xmm0, xmm2
+    movaps  xmm1, xmm2
     jmp     end_color
 bg_color:
-    v3norm  xmm0, xmm3, xmm4
+    v3norm  xmm1, xmm3, xmm4
 end_color:
-    maxps   xmm0, [v4_zero]
-    movaps  xmm1, [r15+Thread.color_sum]
-    addps   xmm0, xmm1
-    movaps  [r15+Thread.color_sum], xmm0
+    maxps   xmm1, [v4_zero]
+    movaps  xmm2, [r15+Thread.color_sum]
+    addps   xmm1, xmm2
+    movaps  [r15+Thread.color_sum], xmm1
 
     inc     byte [r15+Thread.sample_index]
     cmp     byte [r15+Thread.sample_index], SAMPLE_COUNT
