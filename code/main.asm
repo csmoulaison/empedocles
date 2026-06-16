@@ -5,15 +5,15 @@ default rel
 
 ;= Configuration Symbols ===================================
 THREAD_COUNT            equ 7
-SAMPLE_COUNT            equ 8
-%define FSAMPLE_COUNT       8.0
+SAMPLE_COUNT            equ 4
+%define FSAMPLE_COUNT       4.0
 BOUNCE_COUNT            equ 32
-CUBES_COUNT             equ 1
+CUBES_COUNT             equ 8
 
-PIXELS_W                equ 256
-%define FPIXELS_W           256.0
-PIXELS_H                equ 256
-%define FPIXELS_H           256.0
+PIXELS_W                equ 360
+%define FPIXELS_W           360.0
+PIXELS_H                equ 360
+%define FPIXELS_H           360.0
 PIXELS_COUNT            equ PIXELS_W * PIXELS_H
 PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
 REGION_STRIDE           equ PIXELS_W
@@ -59,6 +59,8 @@ extern glfwSwapBuffers
 extern glfwPollEvents
 extern glfwTerminate
 extern glfwGetFramebufferSize
+extern glfwSetInputMode
+extern glfwGetCursorPos
 extern glClearColor
 extern glClear
 extern glViewport
@@ -106,10 +108,10 @@ verts_len           dd 12
 
 align 64
 cam_phi             dd 2.1
-cam_theta           dd -1.1
-cam_phi_per_sec     dd 0.0
-cam_theta_per_sec   dd 0.01
-cam_distance        dd 6.0
+cam_theta           dd -1.0
+cam_phi_per_sec     dd 0.001
+cam_theta_per_sec   dd 0.001
+cam_distance        dd 4.0
 
 align 64
 pixels_w            dd PIXELS_W
@@ -118,44 +120,59 @@ pixels_w            dd PIXELS_W
 %define p2 0.0
 %define p3 1.5
 align 64
+;v4_box_offsets:
+;    ;dd p2, p2, p2, p2 ; dbg
+;    ;dd p3, p2, p2, p2 ; dbg
+;    dd p1, p1, p1, p2
+;    dd p1, p2, p1, p2
+;    dd p1, p3, p1, p2
+;    dd p2, p1, p1, p2
+;    dd p2, p2, p1, p2
+;    dd p2, p3, p1, p2
+;    dd p3, p1, p1, p2
+;    dd p3, p2, p1, p2
+;    dd p3, p3, p1, p2
+;
+;    dd p1, p1, p2, p2
+;    dd p1, p2, p2, p2
+;    dd p1, p3, p2, p2
+;    dd p2, p1, p2, p2
+;    dd p2, p2, p2, p2
+;    dd p2, p3, p2, p2
+;    dd p3, p1, p2, p2
+;    dd p3, p2, p2, p2
+;    dd p3, p3, p2, p2
+;
+;    dd p1, p1, p3, p2
+;    dd p1, p2, p3, p2
+;    dd p1, p3, p3, p2
+;    dd p2, p1, p3, p2
+;    dd p2, p2, p3, p2
+;    dd p2, p3, p3, p2
+;    dd p3, p1, p3, p2
+;    dd p3, p2, p3, p2
+;    dd p3, p3, p3, p2
+
+%define o1 -0.75
+%define o2 0.75
 v4_box_offsets:
-    ;dd p2, p2, p2, p2 ; dbg
-    dd p1, p1, p1, p2
-    dd p1, p2, p1, p2
-    dd p1, p3, p1, p2
-    dd p2, p1, p1, p2
-    dd p2, p2, p1, p2
-    dd p2, p3, p1, p2
-    dd p3, p1, p1, p2
-    dd p3, p2, p1, p2
-    dd p3, p3, p1, p2
+    dd o1, o1, o1, p2
+    dd o2, o1, o1, p2
+    dd o1, o2, o1, p2
+    dd o2, o2, o1, p2
 
-    dd p1, p1, p2, p2
-    dd p1, p2, p2, p2
-    dd p1, p3, p2, p2
-    dd p2, p1, p2, p2
-    dd p2, p2, p2, p2
-    dd p2, p3, p2, p2
-    dd p3, p1, p2, p2
-    dd p3, p2, p2, p2
-    dd p3, p3, p2, p2
-
-    dd p1, p1, p3, p2
-    dd p1, p2, p3, p2
-    dd p1, p3, p3, p2
-    dd p2, p1, p3, p2
-    dd p2, p2, p3, p2
-    dd p2, p3, p3, p2
-    dd p3, p1, p3, p2
-    dd p3, p2, p3, p2
-    dd p3, p3, p3, p2
+    dd o1, o1, o2, p2
+    dd o2, o1, o2, p2
+    dd o1, o2, o2, p2
+    dd o2, o2, o2, p2
 
 align 64
 v4_negative         dd -1.0, -1.0, -1.0, 0.0
-v4_eps              dd 0.01, 0.01, 0.01, 0.00
+v4_eps              dd 0.001, 0.001, 0.001, 0.00
 v4_zero             dd 0.0, 0.0, 0.0, 0.0
 v4_half             dd 0.5, 0.5, 0.5, 0.0
 v4_one              dd 1.0, 1.0, 1.0, 0.0
+v4_two              dd 2.0, 2.0, 2.0, 0.0
 v4_inf              dd 0x7F800000, 0x7F800000, 0x7F800000, 0
 v4_negative_inf     dd 0xFF800000, 0xFF800000, 0xFF800000, 0
 v4_abs_mask         dd 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0
@@ -168,10 +185,17 @@ v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
 v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
 v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
 v4_up               dd 0.0, 1.0, 0.0, 0.0
-v4_viewport_w       dd 12.0, 12.0, 12.0, 0.0
-v4_viewport_nh      dd -12.0, -12.0, -12.0, 0.0
-v4_focal_len        dd 4.0, 4.0, 4.0, 0.0
+v4_refract_index    dd 1.5, 1.5, 1.5, 0.0
+v4_refract_index_reciprocal dd 0.66666, 0.66666, 0.66666, 0.0
+;v4_refract_index    dd 1.1, 1.1, 1.1, 0.0
+;v4_refract_index_reciprocal dd 0.909090, 0.909090, 0.909090, 0.0
+;v4_refract_index    dd 1.0, 1.0, 1.0, 0.0
+;v4_refract_index_reciprocal dd 1.0, 1.0, 1.0, 0.0
+v4_viewport_w       dd 8.0, 8.0, 8.0, 0.0
+v4_viewport_nh      dd -8.0, -8.0, -8.0, 0.0
+v4_focal_len        dd 3.0, 3.0, 3.0, 0.0
 v4_box_size         dd 0.5, 0.5, 0.5, 0.0
+v4_color_attenuation dd 0.6, 0.6, 0.6, 0.0
 
 ;===========================================================
 section .bss align=64
@@ -179,7 +203,7 @@ section .bss align=64
 
 regions_started     resd 1
 regions_completed   resd 1
-host_terminated  resb 1
+host_terminated     resb 1
 
 alignb 64
 thread_memory_array resb Thread_size * THREAD_COUNT
@@ -203,6 +227,9 @@ glfw_window         resq 1
 gl_texture          resd 1
 gl_vao              resd 1
 gl_program          resd 1
+
+cursor_position_x   resq 1
+cursor_position_y   resq 1
 
 ;===========================================================
 section .text
@@ -255,6 +282,16 @@ _start:
     je      exit
     mov     rdi, [glfw_window]
     call    glfwMakeContextCurrent
+
+    mov     edx, 0x00034003         ; GLFW_CURSOR_DISABLED
+    mov     esi, 0x00033001         ; GLFW_CURSOR
+    mov     rdi, [glfw_window]
+    call    glfwSetInputMode
+
+    lea     edx, [cursor_position_y]
+    lea     rsi, [cursor_position_x]
+    mov     rdi, [glfw_window]
+    call    glfwGetCursorPos
 
     ; gl3w
     call    gl3wInit
@@ -354,6 +391,8 @@ _start:
     mov     edi, r13d
     call    glDeleteShader
 
+    mov     r14, 1
+
 ;= Thread Creation =========================================
 ; A number of threads are spawned and each given their own
 ; instance of a thread-local structure.
@@ -370,7 +409,7 @@ _start:
         %push thread_ctx
         mov     rax, 56             ; sys_clone
         mov     rdi, CLONE_FLAGS    ; flags
-        lea     rsi, [thread_memory_array + Thread_size * i] ; child stack pointer
+        lea     rsi, [thread_memory_array + Thread_size * i] ; child stack ptr
         mov     rdx, 0              ; parent thread id
         mov     r10, 0              ; child thread id
         mov     r8, 0               ; child thread local storage
@@ -440,6 +479,12 @@ check_regions_complete:
 ;   and regions complete to 0
 ;===========================================================
 start_frame:
+    inc     r14
+    cmp     r14, 6
+    jle     dont_reset_r14
+    mov     r14, 0
+dont_reset_r14:
+    
     mov     rdi, [glfw_window]      ; If GLFW has recieved a close request, we
     call    glfwWindowShouldClose   ; politely comply
     cmp     eax, 1
@@ -450,16 +495,32 @@ start_frame:
     call    printf
 %endif
 
+    movsd   xmm1, [cursor_position_x]
+    movsd   xmm2, [cursor_position_y]
+    lea     edx, [cursor_position_y]
+    lea     rsi, [cursor_position_x]
+    mov     rdi, [glfw_window]
+    call    glfwGetCursorPos
+
+    movsd  xmm3, [cursor_position_x]
+    movsd  xmm4, [cursor_position_y]
+    subsd   xmm1, xmm3
+    subsd   xmm2, xmm4
+    cvtsd2ss xmm1, xmm1
+    cvtsd2ss xmm2, xmm2
+    mulss   xmm1, [cam_theta_per_sec]
+    mulss   xmm2, [cam_phi_per_sec]
+
     ; Update camera rotation (theta and phi), and find the
     ; position (look from) with the following:
     ;   x = distance * sin(phi) * cos(theta)
     ;   y = distance * cos(phi)
     ;   z = distance * sin(phi) * sin(theta)
     movss   xmm0, [cam_phi]
-    addss   xmm0, [cam_phi_per_sec]
+    addss   xmm0, xmm2
     movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
     movss   xmm0, [cam_theta]       
-    addss   xmm0, [cam_theta_per_sec]
+    addss   xmm0, xmm1
     movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
 
     movss   xmm0, [cam_theta]       ; We calculate all the cos,sin/phi,theta
@@ -588,6 +649,7 @@ pixel_start:
     movaps  [r15+Thread.color_sum], xmm0
    
 sample_start:
+    pxor    xmm12, xmm12               ; DEBUG: norm color
     xor     rax, rax                ; Calculate the x and y coordinates
     xor     rdx, rdx                ; from the current pixel index.
     mov     eax, [r15+Thread.current_pixel]
@@ -620,6 +682,11 @@ ray_start:                          ; Keep intersection data in registers:
                                     ; xmm3: closest t1/t2
     xor     r8, r8                  ;   r8: object index
                                     ;   r9: closest hit inside?
+
+    movaps  xmm11, xmm0
+    movaps  xmm10, xmm1
+
+
 intersection_start:
     lea     rsi, [v4_box_offsets]   ; First, we index the box we will test
     mov     rax, r8                 ; our ray against.
@@ -668,6 +735,7 @@ intersection_start:
 
     ; Having calculated t entry and t exit, we now have to
     ; determine if an intersection did in fact occur.
+
     ucomiss xmm6, xmm7              ; If t entry > t exit, there was no
     jae     intersection_continue   ; intersection.
 
@@ -677,7 +745,10 @@ intersection_start:
     ucomiss xmm6, [v4_zero]         ; If t entry < 0 we hit from inside,
     jbe     intersection_inside     ; otherwise we hit from outside.
 
-intersection_outside: ; Label only here for clarity.
+intersection_outside: ; Label only for clarity
+    ;ucomiss xmm6, [v4_eps]
+    ;jb      intersection_continue
+
     ucomiss xmm6, xmm2              ; When hitting from the outside, t entry is
     jae     intersection_continue   ; the relevant hit distance. If it doesn't
                                     ; beat the closest, we skip this hit.
@@ -687,7 +758,10 @@ intersection_outside: ; Label only here for clarity.
                                     ; from the outside with r9 = 0.
     jmp     intersection_continue
 
-intersection_inside
+intersection_inside:
+    ;ucomiss xmm7, [v4_eps]
+    ;jb      intersection_continue
+   
     ucomiss xmm7, xmm2              ; When hitting from the inside, perform the
     ja      intersection_continue   ; same logic, but using t exit, t2, and
                                     ; r9 = 1.
@@ -696,19 +770,200 @@ intersection_inside
     mov     r9, 1
 
 intersection_continue:
-    inc     r8
-    cmp     r8, 27
+    inc     r8                      ; We keep testing intersections until we
+    cmp     r8, CUBES_COUNT         ; have exceeded CUBES COUNT.
     jl      intersection_start
 
+    ucomiss xmm2, [v4_inf]          ; If no intersections were ever found, xmm2
+    je      calculate_sample_color  ; should still be infinity, so we skip to
+                                    ; final color calculation.
+
+
+    inc     byte [r15+Thread.bounce_index]               ; If we have exceeded
+    cmp     byte [r15+Thread.bounce_index], BOUNCE_COUNT ; BOUNCE MAX, we also
+    ;cmp     byte [r15+Thread.bounce_index], r14b ; BOUNCE MAX, we also
+    jg      calculate_sample_color                       ; skip to final color
+                                                         ; calculation.
+
+    cmp     r9, 0                   ; The logic for calculating the normal is
+    jne     normal_inside           ; sort of flipped depending on if we are
+                                    ; hitting from inside of outside.
+normal_outside: ; Label only for clarity
+    movaps  xmm4, xmm3              ; In the outside case, we do a step function
+    cmpps   xmm4, xmm2, 0           ; with step(v3(t entry), t1)
+    andps   xmm4, [v4_one]
+
+    movaps  xmm5, xmm1              ; To get the hit normal, we multiply the
+    andps   xmm5, [v4_sign_mask]    ; above calculation by the negative sign
+    xorps   xmm5, [v4_sign_mask]    ; of the ray direction...
+    xorps   xmm4, xmm5
+    v3norm  xmm4, xmm14, xmm15      ; ...and normalize.
+
+    jmp     normal_post_inside_check
+
+normal_inside:
+    movaps  xmm4, xmm2              ; And in the inside case:
+    cmpps   xmm4, xmm3, 0           ; step(t2, v3(t exit))
+    andps   xmm4, [v4_one]
+
+    movaps  xmm5, xmm1              ; To get the hit normal, we multiply the
+    andps   xmm5, [v4_sign_mask]    ; above calculation by the negative sign
+    xorps   xmm5, [v4_sign_mask]    ; of the ray direction...
+    xorps   xmm4, xmm5
+    ;xorps   xmm4, [v4_sign_mask]
+    v3norm  xmm4, xmm14, xmm15      ; ...and normalize.
+
+normal_post_inside_check:
+    movaps  xmm12, xmm4
+    ;movaps  xmm5, xmm1              ; To get the hit normal, we multiply the
+    ;andps   xmm5, [v4_sign_mask]    ; above calculation by the negative sign
+    ;xorps   xmm5, [v4_sign_mask]    ; of the ray direction...
+    ;xorps   xmm4, xmm5
+    ;v3norm  xmm4, xmm14, xmm15      ; ...and normalize.
+
+    mulps   xmm2, xmm1              ; To get the hit position, we scale the ray
+    addps   xmm0, xmm2              ; direction by our t hit value.
+
+    ;movaps  xmm5, xmm4              ; Due to floating point imprecision, this
+    ;mulps   xmm5, [v4_eps]          ; might result in a position which, for
+    ;cmp     r9, 0
+    ;jne     add_eps_inside
+    ;addps   xmm0, xmm5
+    ;jmp     add_eps_over
+;add_eps_inside:
+;    subps   xmm0, xmm5
+;add_eps_over:
+    ;addps   xmm0, xmm5              ; instance, causes a hit from the outside to
+                                    ; land inside the cube, which would cause
+                                    ; a reflected bounce to immediately collide.
+                                    ; There are multiple ways to fix this, but
+                                    ; we've opted to add a small amount (v4_eps)
+                                    ; of the normal to nudge it out of that
+                                    ; danger zone.
+
+    movaps  xmm8, xmm1              ; Calculate cos of the angle from the normal
+    v3norm  xmm8, xmm14, xmm15      ; on the refracted side with the following:
+    movaps  xmm5, xmm8              ;   min(dot(-unit_ray_dir, normal), 1.0)
+    xorps   xmm5, [v4_sign_mask]    
+    dpps    xmm5, xmm4, 01110111b
+    minps   xmm5, [v4_one]
+    
+    movaps  xmm6, xmm5              ; Calculate the sin of the same angle by:
+    mulps   xmm6, xmm6              ;   sqrt(1.0 - cos(theta) * cos(theta))
+    xorps   xmm6, [v4_sign_mask]
+    addps   xmm6, [v4_one]
+    sqrtps  xmm6, xmm6
+
+    cmp     r9, 0                   ; If we are refracting from outside, we use
+    jne     refract_inside          ; the reciprocal of the refractive index of
+                                    ; our material in the below calculations.
+    movaps  xmm7, [v4_refract_index_reciprocal]
+    jmp     refract_post_inside_check
+refract_inside:                     ; Otherwise, we use the refractive index
+    movaps  xmm7, [v4_refract_index]; itself. We'll call this value "refract".
+refract_post_inside_check:
+
+    mulps   xmm6, xmm7              ; If (refract * sin(theta) > 1.0), which
+    ucomiss xmm6, [v4_one]          ; corresponds to a ray entering a medium at
+    ja      bounce_reflect          ; a glancing angle, which causes the
+                                    ; relevant refraction equation to have no
+                                    ; solution. In this case, the ray must be
+                                    ; reflected.
+
+    ; r0 = (1 - refraction_index) / (1 + refraction_index)
+    movss   xmm6, [v4_one]
+    movss   xmm9, xmm6
+    movss   xmm10, [v4_refract_index]
+    subss   xmm6, xmm10
+    addss   xmm9, xmm10
+    divss   xmm6, xmm9
+    
+    ; r1 = r0 * r0
+    mulss   xmm6, xmm6
+    
+    ; r2 = r1 + (1 - r1) * pow(1 - cos(theta), 5)
+    movss   xmm9, [v4_one]
+    movss   xmm10, xmm9
+    subss   xmm9, xmm6
+    subss   xmm10, xmm5
+    movss   xmm11, xmm10
+    mulss   xmm10, xmm11
+    mulss   xmm10, xmm11
+    mulss   xmm10, xmm11
+    mulss   xmm10, xmm11
+    mulss   xmm10, xmm11
+    mulss   xmm10, xmm9
+    addss   xmm6, xmm10
+
+    frand_unsigned xmm9
+    ucomiss xmm6, xmm9
+    ja      bounce_reflect
+
+bounce_refract: ; Label only for clarity
+    ;jmp bounce_reflect
+    ;movaps  xmm5, [r15+Thread.color_attenuation]
+    ;mulps   xmm5, [v4_color_attenuation]
+    ;movaps  [r15+Thread.color_attenuation], xmm5
+
+    movaps  xmm6, xmm5              ; Calculate the part of the outgoing ray
+    mulps   xmm6, xmm4              ; which is perpendicular to the normal by:
+    addps   xmm6, xmm8              ;   refract *
+    mulps   xmm6, xmm7              ;   (unit_ray_dir + cos(theta) * normal)
+
+    movaps  xmm7, xmm6              ; And the part which is parallel by:
+    dpps    xmm7, xmm7, 01110111b   ;   -sqrt(abs(
+    xorps   xmm7, [v4_sign_mask]    ;   1.0 - perpendicular.length_squared))
+    addps   xmm7, [v4_one]          ;   * normal
+    andps   xmm7, [v4_abs_mask]
+    sqrtps  xmm7, xmm7
+    xorps   xmm7, [v4_sign_mask]
+    mulps   xmm7, xmm4
+
+    addps   xmm6, xmm7              ; And the final refracted vector is the
+    movaps  xmm1, xmm6              ; perpendicular and parallel parts added
+
+    movaps  xmm5, xmm4              ; Due to floating point imprecision, this
+    mulps   xmm5, [v4_eps]          ; might result in a position which, for
+    cmp     r9, 0
+    ;je      fudge_outside
+    ;xorps   xmm5, [v4_sign_mask]
+fudge_outside:
+    subps   xmm0, xmm5              ; instance, causes a hit from the outside to
+    ;subps   xmm0, xmm5              ; instance, causes a hit from the outside to
+
+    jmp     ray_start               ; together.
+
+bounce_reflect:
+    ;jmp bounce_refract
+    movaps  xmm5, [r15+Thread.color_attenuation]
+    mulps   xmm5, [v4_color_attenuation]
+    movaps  [r15+Thread.color_attenuation], xmm5
+
+    ; reflected vector = v - 2.0 * dot(v,n) * n
+    movaps  xmm5, xmm4          ; xmm7: normal
+    dpps    xmm5, xmm1, 01110111b ; xmm7: dot(v,n)
+    mulps   xmm5, xmm4          ; xmm7: dot(v,n) * n
+    mulps   xmm5, [v4_two] ; xmm7: 2.0 * dot(v,n) * n
+    subps   xmm1, xmm5        ; xmm11: reflected vector
+    ;v3norm  xmm1, xmm14, xmm15
+
+    movaps  xmm5, xmm4              ; Due to floating point imprecision, this
+    mulps   xmm5, [v4_eps]          ; might result in a position which, for
+    cmp     r9, 0
+    je     nudge_outside
+    ;xorps   xmm5, [v4_sign_mask]
+nudge_outside:
+    addps   xmm0, xmm5              ; instance, causes a hit from the outside to
+
+    jmp     ray_start
+
 calculate_sample_color:
-    ucomiss xmm2, [v4_inf]
-    je      bg_color
-    movaps  xmm1, xmm2
-    jmp     end_color
-bg_color:
+    ;movaps  xmm1, xmm10
     v3norm  xmm1, xmm3, xmm4
-end_color:
+    addps   xmm1, [v4_half]
+    ;shufps  xmm1, xmm1, 01010101b
     maxps   xmm1, [v4_zero]
+    mulps   xmm1, [r15+Thread.color_attenuation]
     movaps  xmm2, [r15+Thread.color_sum]
     addps   xmm1, xmm2
     movaps  [r15+Thread.color_sum], xmm1
