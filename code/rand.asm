@@ -28,14 +28,37 @@
     subss   %1, [v4_three]
 %endmacro
 
-; %1 cannot be xmm0
-%macro frand_normal 1
+%macro frand_normal 2
     frand_unsigned %1
-    frand_unsigned xmm0
-    addss %1, xmm0
-    frand_unsigned xmm0
-    addss %1, xmm0
-    frand_unsigned xmm0
-    addss %1, xmm0
+    frand_unsigned %2
+    addss %1, %2
+    frand_unsigned %2
+    addss %1, %2
+    frand_unsigned %2
+    addss %1, %2
     subss %1, [v4_two]
+%endmacro
+
+%macro irand_unsigned 2
+    mov     ebp, [r15+Thread.seed]
+
+    mov     eax, ebp
+    shl     eax, 13
+    xor     ebp, eax
+
+    mov     eax, ebp
+    shr     eax, 17
+    xor     ebp, eax
+
+    mov     eax, ebp
+    shl     eax, 5
+    xor     ebp, eax
+
+    xor     rax, rax
+    xor     rdx, rdx
+    mov     eax, ebp
+    mov     edi, %2
+    div     edi
+
+    mov     %1, edx
 %endmacro
