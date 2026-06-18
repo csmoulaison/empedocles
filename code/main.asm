@@ -101,10 +101,16 @@ section .data align=64
 ;===========================================================
 
 align 64
+profile_start       dq 0
+profile_end         dq 0
+profile_res         dq 0
+current_frame       dd 0
+
 msglen equ 4096
 msg                 db 'msg error', 10, 0
 window_name         db 'Empedocles Renderer', 10, 0
 debug_msg           db 'cam %f, %f, %f', 10, 0
+profile_msg         db 'Start       %u', 10, "End         %u", 10, "Elapsed     %u ( %u ms)", 10, 0
 img_header          db 'P3', 10, '640 640', 10, '255', 10, 0
 img_line            db '%hhu %hhu %hhu', 10, 0
 
@@ -503,6 +509,51 @@ start_frame:
     call    printf
 %endif
 
+infiniloop:
+    add     dword [current_frame], 1
+    cmp     dword [current_frame], 100
+    je      start_profile
+    cmp     dword [current_frame], 200
+    je      end_profile
+    jmp     skip_profile
+start_profile:
+    lfence
+    rdtsc
+    ; below shift shit wrong?
+    shl     rax, 32
+    shrd    rax, rdx, 32
+    mov     [profile_start], rax
+    jmp     skip_profile
+
+end_profile:
+
+    rdtscp
+    shl     rax, 32
+    shrd    rax, rdx, 32
+    mov     [profile_end], rax
+    sub     rax, [profile_start]
+    mov     [profile_res], rax
+    lfence
+
+    xor     rax, rax
+    xor     rdx, rdx
+    mov     rax, [profile_res]
+    mov     rdi, 1000000
+    div     rdi
+
+    mov     r8, rax
+    mov     rcx, [profile_res]
+    mov     rdx, [profile_end]
+    mov     rsi, [profile_start]
+    mov     rdi, profile_msg
+    call    printf
+
+    mov     rdi, 0
+    call    fflush
+    jmp     exit_host
+
+skip_profile:
+
     xor     r11, r11
 calculate_history_frame:
 
@@ -522,19 +573,18 @@ calculate_history_frame:
     mulss   xmm1, [cam_theta_sensitivity]
     mulss   xmm2, [cam_phi_sensitivity]
 
-
     ; Update camera rotation (theta and phi), and find the
     ; position (look from) with the following:
     ;   x = distance * sin(phi) * cos(theta)
     ;   y = distance * cos(phi)
     ;   z = distance * sin(phi) * sin(theta)
     movss   xmm0, [cam_phi]
-    addss   xmm0, xmm2
-    ;addss   xmm0, [cam_phi_per_sec]
+    ;addss   xmm0, xmm2
+    addss   xmm0, [cam_phi_per_sec]
     movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
     movss   xmm0, [cam_theta]       
-    addss   xmm0, xmm1
-    ;addss   xmm0, [cam_theta_per_sec]
+    ;addss   xmm0, xmm1
+    addss   xmm0, [cam_theta_per_sec]
     movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
 
     movss   xmm0, [cam_theta]       ; We calculate all the cos,sin/phi,theta
