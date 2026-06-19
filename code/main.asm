@@ -12,16 +12,20 @@ CUBES_COUNT             equ 8
 HISTORY_FRAMES_PER_FRAME equ 200
 HISTORY_FRAMES_COUNT    equ 800
 
-PIXELS_W                equ 256
-%define FPIXELS_W           256.0
-PIXELS_H                equ 256
-%define FPIXELS_H           256.0
+PIXELS_W                equ 512
+%define FPIXELS_W           512.0
+PIXELS_H                equ 512
+%define FPIXELS_H           512.0
 PIXELS_COUNT            equ PIXELS_W * PIXELS_H
 PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
-REGION_STRIDE           equ PIXELS_W
+REGION_STRIDE           equ PIXELS_W * 2
 REGIONS_COUNT           equ PIXELS_COUNT / REGION_STRIDE
 
 OUTPUT_FRAMES_TO_FILE   equ 0
+OUTPUT_PROFILE          equ 1
+UPDATE_GL               equ 1
+PROFILE_START_FRAME     equ 100
+PROFILE_END_FRAME       equ 600
 
 CLONE_VM                equ 0x00000100
 CLONE_FS                equ 0x00000200
@@ -110,7 +114,7 @@ msglen equ 4096
 msg                 db 'msg error', 10, 0
 window_name         db 'Empedocles Renderer', 10, 0
 debug_msg           db 'cam %f, %f, %f', 10, 0
-profile_msg         db 'Start       %u', 10, "End         %u", 10, "Elapsed     %u ( %u ms)", 10, 0
+profile_msg         db 'Start       %llu', 10, "End         %llu", 10, "Elapsed     %llu (~%llu ms)", 10, 0
 img_header          db 'P3', 10, '640 640', 10, '255', 10, 0
 img_line            db '%hhu %hhu %hhu', 10, 0
 
@@ -509,11 +513,11 @@ start_frame:
     call    printf
 %endif
 
-infiniloop:
+%if OUTPUT_PROFILE = 1
     add     dword [current_frame], 1
-    cmp     dword [current_frame], 100
+    cmp     dword [current_frame], PROFILE_START_FRAME
     je      start_profile
-    cmp     dword [current_frame], 200
+    cmp     dword [current_frame], PROFILE_END_FRAME
     je      end_profile
     jmp     skip_profile
 start_profile:
@@ -522,37 +526,36 @@ start_profile:
     ; below shift shit wrong?
     shl     rax, 32
     shrd    rax, rdx, 32
-    mov     [profile_start], rax
+    mov     qword [profile_start], rax
     jmp     skip_profile
 
 end_profile:
-
     rdtscp
+    lfence
     shl     rax, 32
     shrd    rax, rdx, 32
-    mov     [profile_end], rax
-    sub     rax, [profile_start]
-    mov     [profile_res], rax
-    lfence
+    mov     qword [profile_end], rax
+    sub     qword rax, [profile_start]
+    mov     qword [profile_res], rax
 
     xor     rax, rax
     xor     rdx, rdx
-    mov     rax, [profile_res]
-    mov     rdi, 1000000
+    mov     qword rax, [profile_res]
+    mov     rdi, 4000000
     div     rdi
 
-    mov     r8, rax
-    mov     rcx, [profile_res]
-    mov     rdx, [profile_end]
-    mov     rsi, [profile_start]
+    mov     qword r8, rax
+    mov     qword rcx, [profile_res]
+    mov     qword rdx, [profile_end]
+    mov     qword rsi, [profile_start]
     mov     rdi, profile_msg
     call    printf
 
     mov     rdi, 0
     call    fflush
     jmp     exit_host
-
 skip_profile:
+%endif
 
     xor     r11, r11
 calculate_history_frame:
@@ -1126,6 +1129,7 @@ write_to_pixel:
 ; back to start frame.
 ;===========================================================
 end_frame:
+%if UPDATE_GL = 1
     push    0
     push    pixels
     push    0x1401                  ; GL_UNSIGNED_BYTE
@@ -1178,6 +1182,7 @@ end_frame:
     mov     rdi, [glfw_window]      ; Main loop end
     call    glfwSwapBuffers
     call    glfwPollEvents
+%endif
 
 %if OUTPUT_FRAMES_TO_FILE            ; Flush stdout, otherwise if we exit the
     mov     rdi, 0                  ; program at the start of the next frame it
