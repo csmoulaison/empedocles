@@ -221,7 +221,7 @@ v4_refract_index_reciprocal dd 0.66666, 0.66666, 0.66666, 0.0
 ;v4_refract_index    dd 1.0, 1.0, 1.0, 0.0
 ;v4_refract_index_reciprocal dd 1.0, 1.0, 1.0, 0.0
 v4_fuzz_factor      dd 0.001, 0.001, 0.001, 0.0
-v4_blur_factor      dd 0.0, 0.0, 0.0, 0.0
+v4_blur_factor      dd 1.2, 1.2, 1.2, 0.0
 v4_viewport_w       dd 8.0, 8.0, 8.0, 0.0
 v4_viewport_nh      dd -8.0, -8.0, -8.0, 0.0
 v4_focal_len        dd 2.5, 2.5, 2.5, 0.0
@@ -704,8 +704,6 @@ skip_reset_history_frame:
     xchg    [regions_completed], eax
     xor     eax, eax
     xchg    [regions_started], eax
-    ;mov    [regions_started], 0    ; Alternate way, want to profile to see
-    ;mov    [regions_completed], 0  ; if it's faster or slower
     jmp     thread_idle             ; Back to thread idle to work on rendering
 
 ;= Render Region ===========================================
