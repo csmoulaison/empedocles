@@ -8,8 +8,8 @@ do
         %define SAMPLE_COUNT $j
         %define OUTPUT_PROFILE 1
         %define UPDATE_GL 0
-        %define MOUSE_CONTROL 0" > build/profile.asm
-        EMPEDOCLES_PARAMS="-p ./build/profile.asm" make clean bin/empedocles
-        bin/empedocles >> tests/threads_samples.csv
+        %define MOUSE_CONTROL 0" > ../build/profile.asm
+        (cd ../ && EMPEDOCLES_PARAMS="-p ../build/profile.asm" make clean bin/empedocles)
+        ../bin/empedocles >> other_test.csv
     done
 done

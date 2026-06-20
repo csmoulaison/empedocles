@@ -1,7 +1,7 @@
 MAKEFLAGS += -r
 GEN_DIR = code/generation
 SHADERS = code/shaders/screen.vert code/shaders/screen.frag
-INCLUDED = code/vec3.asm code/rand.asm code/config_defaults.asm
+INCLUDED = code/vec3.asm code/rand.asm code/config.asm
 
 # Root targets
 bin/empedocles: build/main.o build/gl3w.o
@@ -29,7 +29,7 @@ profile: bin/empedocles
 
 # Leafier targets
 build/main.o: code/main.asm $(INCLUDED) $(GEN_DIR)/generated_data.asm
-	nasm code/main.asm -o build/main.o -f elf64 -i code/ -p config_defaults.asm $(EMPEDOCLES_PARAMS) -g -F dwarf
+	nasm code/main.asm -o build/main.o -f elf64 -i code/ -p config.asm $(EMPEDOCLES_PARAMS) -g -F dwarf
 
 $(GEN_DIR)/generated_data.asm: $(SHADERS) $(GEN_DIR)/generate
 	$(GEN_DIR)/generate
