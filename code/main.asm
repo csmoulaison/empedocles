@@ -754,10 +754,6 @@ sample_start:
     shufps  xmm1, xmm1, 0
 
     irand_unsigned r10d, HISTORY_FRAMES_COUNT
-    ;xor     rax, rax
-    ;xor     rdx, rdx
-    ;mov     r10d, HISTORY_FRAMES_COUNT
-    ;div     r10d
     xor     rax, rax
     mov     eax, HistoryFrame_size
     mul     r10d
@@ -819,6 +815,7 @@ intersection_start:
     divps   xmm4, xmm1              ; to be used to get both the ray origin and
                                     ; half the box extents in terms of t.
 
+%if TEST=0
     movaps  xmm5, xmm4              ; Calculate -(ray origin / direction), which
     movaps  xmm6, xmm0              ; represents the world origin in t space, or
     subps   xmm6, [rsi]             ; the ray t distance per-axis. We offset the
@@ -829,6 +826,17 @@ intersection_start:
     andps   xmm6, [v4_abs_mask]     ; which encodes the ray t distance from the
     mulps   xmm6, [v4_box_size]     ; center of the box to either slab boundary
                                     ; for each axis.
+%else
+    movaps  xmm6, xmm0         
+    subps   xmm6, [rsi]        
+    movaps  xmm5, xmm4         
+    mulps   xmm5, xmm6         
+    movaps  xmm6, xmm4         
+    xorps   xmm5, [v4_sign_mask]
+
+    andps   xmm6, [v4_abs_mask]
+    mulps   xmm6, [v4_box_size]
+%endif
 
     movaps  xmm4, xmm5              ; Calculate both t1 and t2, which encode
     subps   xmm4, xmm6              ; the per-axis intersection times for the
@@ -907,12 +915,6 @@ normal_outside: ; Label only for clarity
     cmpps   xmm4, xmm2, 0           ; with step(v3(t entry), t1)
     andps   xmm4, [v4_one]
 
-    movaps  xmm5, xmm1              ; To get the hit normal, we multiply the
-    andps   xmm5, [v4_sign_mask]    ; above calculation by the negative sign
-    xorps   xmm5, [v4_sign_mask]    ; of the ray direction...
-    xorps   xmm4, xmm5
-    v3norm  xmm4, xmm14, xmm15      ; ...and normalize.
-
     jmp     normal_post_inside_check
 
 normal_inside:
@@ -920,40 +922,16 @@ normal_inside:
     cmpps   xmm4, xmm3, 0           ; step(t2, v3(t exit))
     andps   xmm4, [v4_one]
 
+normal_post_inside_check:
+    movaps  xmm12, xmm4
     movaps  xmm5, xmm1              ; To get the hit normal, we multiply the
     andps   xmm5, [v4_sign_mask]    ; above calculation by the negative sign
     xorps   xmm5, [v4_sign_mask]    ; of the ray direction...
     xorps   xmm4, xmm5
-    ;xorps   xmm4, [v4_sign_mask]
     v3norm  xmm4, xmm14, xmm15      ; ...and normalize.
-
-normal_post_inside_check:
-    movaps  xmm12, xmm4
-    ;movaps  xmm5, xmm1              ; To get the hit normal, we multiply the
-    ;andps   xmm5, [v4_sign_mask]    ; above calculation by the negative sign
-    ;xorps   xmm5, [v4_sign_mask]    ; of the ray direction...
-    ;xorps   xmm4, xmm5
-    ;v3norm  xmm4, xmm14, xmm15      ; ...and normalize.
 
     mulps   xmm2, xmm1              ; To get the hit position, we scale the ray
     addps   xmm0, xmm2              ; direction by our t hit value.
-
-    ;movaps  xmm5, xmm4              ; Due to floating point imprecision, this
-    ;mulps   xmm5, [v4_eps]          ; might result in a position which, for
-    ;cmp     r9, 0
-    ;jne     add_eps_inside
-    ;addps   xmm0, xmm5
-    ;jmp     add_eps_over
-;add_eps_inside:
-;    subps   xmm0, xmm5
-;add_eps_over:
-    ;addps   xmm0, xmm5              ; instance, causes a hit from the outside to
-                                    ; land inside the cube, which would cause
-                                    ; a reflected bounce to immediately collide.
-                                    ; There are multiple ways to fix this, but
-                                    ; we've opted to add a small amount (v4_eps)
-                                    ; of the normal to nudge it out of that
-                                    ; danger zone.
 
     movaps  xmm8, xmm1              ; Calculate cos of the angle from the normal
     v3norm  xmm8, xmm14, xmm15      ; on the refracted side with the following:

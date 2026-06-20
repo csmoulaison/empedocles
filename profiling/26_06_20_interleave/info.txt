@@ -1,0 +1,39 @@
+= Background
+
+This was really more a test for the new profiling workflow 
+than anything else, but the purpose of this was to test
+an alternate ordering for a small part of the intersection
+code.
+
+Original:
+    movaps  xmm5, xmm4              ; Calculate -(ray origin / direction), which
+    movaps  xmm6, xmm0              ; represents the world origin in t space, or
+    subps   xmm6, [rsi]             ; the ray t distance per-axis. We offset the
+    mulps   xmm5, xmm6              ; ray origin for this calculation so we can
+    xorps   xmm5, [v4_sign_mask]    ; act like the box is at the world origin.
+
+    movaps  xmm6, xmm4              ; Calculate box size / abs(ray direction),
+    andps   xmm6, [v4_abs_mask]     ; which encodes the ray t distance from the
+    mulps   xmm6, [v4_box_size]     ; center of the box to either slab boundary
+                                    ; for each axis.
+Interleaved:
+    movaps  xmm6, xmm0         
+    subps   xmm6, [rsi]        
+    movaps  xmm5, xmm4         
+    mulps   xmm5, xmm6         
+    movaps  xmm6, xmm4         
+    xorps   xmm5, [v4_sign_mask]
+
+    andps   xmm6, [v4_abs_mask]
+    mulps   xmm6, [v4_box_size]
+
+I had some vague ideas about the way that reording some of 
+these operations *might* speed up the code, but didn't
+expect much of anything.
+
+= Conclusion
+The results are entirely inconclusive, if anything being
+worse for the interleaved case, at least for the chosen test
+specs. I conclude that the original is strictly preferred,
+as the logic is clearer and no difference in speed has been
+demonstrated.
