@@ -4,28 +4,20 @@ default rel
 %include 'rand.asm'
 
 ;= Configuration Symbols ===================================
-THREAD_COUNT            equ 7
-SAMPLE_COUNT            equ 8
-%define FSAMPLE_COUNT       8.0
-BOUNCE_COUNT            equ 32
-CUBES_COUNT             equ 8
-HISTORY_FRAMES_PER_FRAME equ 200
-HISTORY_FRAMES_COUNT    equ 800
-
-PIXELS_W                equ 512
-%define FPIXELS_W           512.0
-PIXELS_H                equ 512
-%define FPIXELS_H           512.0
 PIXELS_COUNT            equ PIXELS_W * PIXELS_H
 PIXEL_BUFFER_SIZE       equ PIXELS_COUNT * 4
-REGION_STRIDE           equ PIXELS_W * 2
+REGION_STRIDE           equ DEF_REGION_STRIDE
 REGIONS_COUNT           equ PIXELS_COUNT / REGION_STRIDE
 
-OUTPUT_FRAMES_TO_FILE   equ 0
-OUTPUT_PROFILE          equ 1
-UPDATE_GL               equ 1
-PROFILE_START_FRAME     equ 100
-PROFILE_END_FRAME       equ 600
+%defstr STR_THREAD_COUNT THREAD_COUNT
+%defstr STR_SAMPLE_COUNT SAMPLE_COUNT
+%defstr STR_BOUNCE_COUNT BOUNCE_COUNT
+%defstr STR_CUBES_COUNT CUBES_COUNT
+%defstr STR_PIXELS_COUNT PIXELS_W*PIXELS_W
+%defstr STR_REGION_STRIDE DEF_REGION_STRIDE
+%defstr STR_REGIONS_COUNT (PIXELS_W*PIXELS_W)/(DEF_REGION_STRIDE)
+%defstr STR_PROFILE_START_FRAME PROFILE_START_FRAME
+%defstr STR_PROFILE_END_FRAME PROFILE_END_FRAME
 
 CLONE_VM                equ 0x00000100
 CLONE_FS                equ 0x00000200
@@ -114,7 +106,16 @@ msglen equ 4096
 msg                 db 'msg error', 10, 0
 window_name         db 'Empedocles Renderer', 10, 0
 debug_msg           db 'cam %f, %f, %f', 10, 0
-profile_msg         db 'Start       %llu', 10, "End         %llu", 10, "Elapsed     %llu (~%llu ms)", 10, 0
+
+%if OUTPUT_PROFILE = 1
+; Start cycles, End cycles, Elapsed cycles, Threads, Samples, Bounces, Cubes,
+;   Pixel count, Region stride, Region count, Profile start frame,
+;   Profile end frame
+profile_msg         db '%llu, %llu, %llu,', STR_THREAD_COUNT, ",", STR_SAMPLE_COUNT, ",", \
+    STR_BOUNCE_COUNT, ",", STR_CUBES_COUNT, ",", STR_PIXELS_COUNT, ",", STR_REGION_STRIDE, ",", \
+    STR_REGIONS_COUNT, ",", STR_PROFILE_START_FRAME, ",", STR_PROFILE_END_FRAME, 10, 0
+%endif
+
 img_header          db 'P3', 10, '640 640', 10, '255', 10, 0
 img_line            db '%hhu %hhu %hhu', 10, 0
 
@@ -211,6 +212,8 @@ v4_sample_count     dd FSAMPLE_COUNT,FSAMPLE_COUNT,FSAMPLE_COUNT,0.0
 v4_pixels_w         dd FPIXELS_W,FPIXELS_W,FPIXELS_W,0.0
 v4_pixels_h         dd FPIXELS_H,FPIXELS_H,FPIXELS_H,0.0
 v4_up               dd 0.0, 1.0, 0.0, 0.0
+;v4_refract_index    dd 2.4, 2.4, 2.4, 0.0
+;v4_refract_index_reciprocal dd 0.41666, 0.41666, 0.41666, 0.0
 v4_refract_index    dd 1.5, 1.5, 1.5, 0.0
 v4_refract_index_reciprocal dd 0.66666, 0.66666, 0.66666, 0.0
 ;v4_refract_index    dd 1.2, 1.2, 1.2, 0.0
@@ -560,6 +563,7 @@ skip_profile:
     xor     r11, r11
 calculate_history_frame:
 
+%if MOUSE_CONTROL = 1
     movsd   xmm1, [cursor_position_x]
     movsd   xmm2, [cursor_position_y]
     lea     edx, [cursor_position_y]
@@ -575,6 +579,7 @@ calculate_history_frame:
     cvtsd2ss xmm2, xmm2
     mulss   xmm1, [cam_theta_sensitivity]
     mulss   xmm2, [cam_phi_sensitivity]
+%endif
 
     ; Update camera rotation (theta and phi), and find the
     ; position (look from) with the following:
@@ -582,12 +587,18 @@ calculate_history_frame:
     ;   y = distance * cos(phi)
     ;   z = distance * sin(phi) * sin(theta)
     movss   xmm0, [cam_phi]
-    ;addss   xmm0, xmm2
+%if MOUSE_CONTROL = 1
+    addss   xmm0, xmm2
+%else
     addss   xmm0, [cam_phi_per_sec]
+%endif
     movss   [cam_phi], xmm0         ; Add to phi for vertical orbit
     movss   xmm0, [cam_theta]       
-    ;addss   xmm0, xmm1
+%if MOUSE_CONTROL = 1
+    addss   xmm0, xmm1
+%else
     addss   xmm0, [cam_theta_per_sec]
+%endif
     movss   [cam_theta], xmm0       ; Add to theta for horizontal orbit
 
     movss   xmm0, [cam_theta]       ; We calculate all the cos,sin/phi,theta
