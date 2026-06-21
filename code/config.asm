@@ -1,15 +1,15 @@
 %define THREAD_COUNT            7
-%define SAMPLE_COUNT            2
-%define FSAMPLE_COUNT           2.0
+%define SAMPLE_COUNT            4
+%define FSAMPLE_COUNT           4.0
 %define BOUNCE_COUNT            32
 %define CUBES_COUNT             8
 %define HISTORY_FRAMES_PER_FRAME 200
 %define HISTORY_FRAMES_COUNT    600
 
-%define PIXELS_W                360
-%define FPIXELS_W               360.0
-%define PIXELS_H                360
-%define FPIXELS_H               360.0
+%define PIXELS_W                256
+%define FPIXELS_W               256.0
+%define PIXELS_H                256
+%define FPIXELS_H               256.0
 %define DEF_REGION_STRIDE       PIXELS_W * 2
 
 %define OUTPUT_FRAMES_TO_FILE   0

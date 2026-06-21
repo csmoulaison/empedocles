@@ -815,7 +815,6 @@ intersection_start:
     divps   xmm4, xmm1              ; to be used to get both the ray origin and
                                     ; half the box extents in terms of t.
 
-%if TEST=0
     movaps  xmm5, xmm4              ; Calculate -(ray origin / direction), which
     movaps  xmm6, xmm0              ; represents the world origin in t space, or
     subps   xmm6, [rsi]             ; the ray t distance per-axis. We offset the
@@ -826,17 +825,6 @@ intersection_start:
     andps   xmm6, [v4_abs_mask]     ; which encodes the ray t distance from the
     mulps   xmm6, [v4_box_size]     ; center of the box to either slab boundary
                                     ; for each axis.
-%else
-    movaps  xmm6, xmm0         
-    subps   xmm6, [rsi]        
-    movaps  xmm5, xmm4         
-    mulps   xmm5, xmm6         
-    movaps  xmm6, xmm4         
-    xorps   xmm5, [v4_sign_mask]
-
-    andps   xmm6, [v4_abs_mask]
-    mulps   xmm6, [v4_box_size]
-%endif
 
     movaps  xmm4, xmm5              ; Calculate both t1 and t2, which encode
     subps   xmm4, xmm6              ; the per-axis intersection times for the
@@ -888,7 +876,7 @@ intersection_inside:
     ucomiss xmm7, xmm2              ; When hitting from the inside, perform the
     ja      intersection_continue   ; same logic, but using t exit, t2, and
                                     ; r9 = 1.
-    movaps  xmm2, xmm7              ; NOTE: is ja the right condition up there?
+    movaps  xmm2, xmm7              
     movaps  xmm3, xmm5
     mov     r9, 1
 
@@ -915,12 +903,16 @@ normal_outside: ; Label only for clarity
     cmpps   xmm4, xmm2, 0           ; with step(v3(t entry), t1)
     andps   xmm4, [v4_one]
 
+    movaps  xmm7, [v4_refract_index_reciprocal]
+
     jmp     normal_post_inside_check
 
 normal_inside:
     movaps  xmm4, xmm2              ; And in the inside case:
     cmpps   xmm4, xmm3, 0           ; step(t2, v3(t exit))
     andps   xmm4, [v4_one]
+
+    movaps  xmm7, [v4_refract_index]
 
 normal_post_inside_check:
     movaps  xmm12, xmm4
@@ -946,16 +938,7 @@ normal_post_inside_check:
     addps   xmm6, [v4_one]
     sqrtps  xmm6, xmm6
 
-    cmp     r9, 0                   ; If we are refracting from outside, we use
-    jne     refract_inside          ; the reciprocal of the refractive index of
-                                    ; our material in the below calculations.
-    movaps  xmm7, [v4_refract_index_reciprocal]
-    jmp     refract_post_inside_check
-refract_inside:                     ; Otherwise, we use the refractive index
-    movaps  xmm7, [v4_refract_index]; itself. We'll call this value "refract".
-refract_post_inside_check:
-
-    mulps   xmm6, xmm7              ; If (refract * sin(theta) > 1.0), which
+   mulps   xmm6, xmm7              ; If (refract * sin(theta) > 1.0), which
     ucomiss xmm6, [v4_one]          ; corresponds to a ray entering a medium at
     ja      bounce_reflect          ; a glancing angle, which causes the
                                     ; relevant refraction equation to have no
@@ -1013,7 +996,6 @@ bounce_refract: ; Label only for clarity
 
     movaps  xmm5, xmm4              ; Due to floating point imprecision, this
     mulps   xmm5, [v4_eps]          ; might result in a position which, for
-    cmp     r9, 0
     subps   xmm0, xmm5              ; instance, causes a hit from the outside to
 
     ;movaps  xmm5, [r15+Thread.color_attenuation]
@@ -1037,7 +1019,6 @@ bounce_reflect:
 
     movaps  xmm5, xmm4              ; Due to floating point imprecision, this
     mulps   xmm5, [v4_eps]          ; might result in a position which, for
-    cmp     r9, 0
     addps   xmm0, xmm5              ; instance, causes a hit from the outside to
 
 bounce_over:
