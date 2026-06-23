@@ -111,7 +111,7 @@ debug_msg           db 'cam %f, %f, %f', 10, 0
 ; Start cycles, End cycles, Elapsed cycles, Threads, Samples, Bounces, Cubes,
 ;   Pixel count, Region stride, Region count, Profile start frame,
 ;   Profile end frame
-profile_msg         db '%llu, %llu, %llu,', STR_THREAD_COUNT, ",", STR_SAMPLE_COUNT, ",", \
+profile_msg         db '%llu,%llu,%llu,', STR_THREAD_COUNT, ",", STR_SAMPLE_COUNT, ",", \
     STR_BOUNCE_COUNT, ",", STR_CUBES_COUNT, ",", STR_PIXELS_COUNT, ",", STR_REGION_STRIDE, ",", \
     STR_REGIONS_COUNT, ",", STR_PROFILE_START_FRAME, ",", STR_PROFILE_END_FRAME, 10, 0
 %endif
@@ -146,8 +146,8 @@ align 64
     %define p1 -1.5
     %define p3 1.5
     v4_box_offsets:
-        dd p2, p2, p2, p2 ; dbg
-        dd p3, p2, p2, p2 ; dbg
+        ;dd p2, p2, p2, p2 ; dbg
+        ;dd p3, p2, p2, p2 ; dbg
         dd p1, p1, p1, p2
         dd p1, p2, p1, p2
         dd p1, p3, p1, p2
@@ -221,7 +221,7 @@ v4_refract_index_reciprocal dd 0.66666, 0.66666, 0.66666, 0.0
 ;v4_refract_index    dd 1.0, 1.0, 1.0, 0.0
 ;v4_refract_index_reciprocal dd 1.0, 1.0, 1.0, 0.0
 v4_fuzz_factor      dd 0.001, 0.001, 0.001, 0.0
-v4_blur_factor      dd 1.2, 1.2, 1.2, 0.0
+v4_blur_factor      dd 0.2, 0.2, 0.2, 0.0
 v4_viewport_w       dd 8.0, 8.0, 8.0, 0.0
 v4_viewport_nh      dd -8.0, -8.0, -8.0, 0.0
 v4_focal_len        dd 2.5, 2.5, 2.5, 0.0
