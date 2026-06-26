@@ -1,0 +1,2 @@
+Unsurprisingly, reordering data by order of appearance in
+the inner loops caused a *sliiight* speed increase.

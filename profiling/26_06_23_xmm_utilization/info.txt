@@ -1,0 +1,16 @@
+We wanted to test what increasing xmm register utilization 
+would do, allowing us to do less reads from memory.
+
+xmm12-xmm15 were populated with v4_sign_mask, v4_zero, 
+v4_one, and v4_inf at the render_region label. These were 
+selected on the basis of common usage throughout the loop.
+
+The results were very surprising. Pre-packing the data into
+the registers caused it to be slower than doing memory 
+reads. I have no compelling ideas as to why. Maybe using the
+registers in this way caused issues with utilization of 
+specific units in the CPU that could be fixed with some kind
+of interleaving.
+
+The verdict: We are sticking with direct memory reads,
+miraculously.
